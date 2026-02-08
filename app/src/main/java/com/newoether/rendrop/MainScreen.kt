@@ -1171,10 +1171,17 @@ fun ProjectCard(project: ProjectInfo, onClick: (ProjectInfo) -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            stringResource(R.string.frame_count, project.finishedFrame, project.totalFrame),
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        Column {
+                            Text(
+                                stringResource(R.string.frame_count, project.finishedFrame, project.totalFrame),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                stringResource(R.string.frame_range, project.frameStart, project.frameEnd, project.frameStep),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                            )
+                        }
                         Text(
                             "${(progress * 100).toInt()}%",
                             style = MaterialTheme.typography.bodySmall,

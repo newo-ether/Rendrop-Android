@@ -31,6 +31,7 @@
     <string name="unknown_device">未知设备</string>
     <string name="frame_count">%1$d / %2$d 帧</string>
     <string name="frame_label">帧 %1$d</string>
+    <string name="frame_range">帧 %1$d - %2$d (帧间隔 %3$d)</string>
     <string name="status_rendering">渲染中</string>
     <string name="status_finished">已完成</string>
     <string name="status_error">错误</string>
