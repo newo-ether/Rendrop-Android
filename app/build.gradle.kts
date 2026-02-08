@@ -52,7 +52,6 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.foundation)
-    implementation(libs.material3)
     implementation(libs.androidx.compose.material.icons.extended)
 
     // Kotlinx serialization
@@ -66,6 +65,10 @@ dependencies {
 
     // Material
     implementation(libs.material)
+
+    // Animation
+    implementation(libs.androidx.compose.animation)
+    implementation(libs.androidx.compose.animation.core)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
