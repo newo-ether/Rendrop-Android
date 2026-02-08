@@ -16,6 +16,11 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // Include both common ARM architectures
+            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+        }
     }
 
     buildTypes {
@@ -47,6 +52,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.compose.runtime.livedata)
     implementation(libs.androidx.foundation)
     implementation(libs.androidx.compose.material.icons.extended)
 
@@ -68,6 +74,12 @@ dependencies {
 
     // DataStore
     implementation(libs.datastore.preferences)
+
+    // RxFFmpeg
+    implementation(libs.rxffmpeg)
+
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Animation
     implementation(libs.androidx.compose.animation)

@@ -37,4 +37,15 @@
     <string name="status_error">Error</string>
     <string name="status_queued">Queued</string>
     <string name="status_loading">Loading</string>
+    <string name="generate_video">Generate Video</string>
+    <string name="quality">Quality</string>
+    <string name="low_quality">Low Quality</string>
+    <string name="high_quality">High Quality</string>
+    <string name="frame_rate">Frame Rate (FPS)</string>
+    <string name="generate">Generate</string>
+    <string name="video_started">Video generation started</string>
+    <string name="generating_video">Generating video...</string>
+    <string name="video_success">Video generated successfully!</string>
+    <string name="video_error">Failed to generate video.</string>
+    <string name="downloading_frames">Downloading frames (%1$d/%2$d)</string>
 </resources>

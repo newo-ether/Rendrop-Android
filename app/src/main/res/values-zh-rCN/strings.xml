@@ -37,4 +37,15 @@
     <string name="status_error">错误</string>
     <string name="status_queued">排队中</string>
     <string name="status_loading">加载中</string>
+    <string name="generate_video">生成视频</string>
+    <string name="quality">画质</string>
+    <string name="low_quality">低画质 (缩略图)</string>
+    <string name="high_quality">高画质 (原图)</string>
+    <string name="frame_rate">帧率 (FPS)</string>
+    <string name="generate">生成</string>
+    <string name="video_started">视频生成已开始</string>
+    <string name="generating_video">正在生成视频...</string>
+    <string name="video_success">视频生成成功！</string>
+    <string name="video_error">视频生成失败。</string>
+    <string name="downloading_frames">正在下载帧 (%1$d/%2$d)</string>
 </resources>

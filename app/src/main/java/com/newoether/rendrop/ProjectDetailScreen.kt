@@ -1,6 +1,7 @@
 package com.newoether.rendrop
 
 import androidx.activity.compose.BackHandler
+import android.content.Context
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -10,10 +11,12 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -22,22 +25,26 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
@@ -45,12 +52,16 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.work.*
 import coil3.compose.SubcomposeAsyncImage
 import coil3.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
@@ -71,7 +82,16 @@ fun ProjectDetailScreen(
     var isAscending by rememberSaveable { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var selectedFrameNum by remember { mutableStateOf<Int?>(null) }
+    var showVideoDialog by remember { mutableStateOf(false) }
+    
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val workManager = WorkManager.getInstance(context)
+    
+    // Track video generation work
+    val workInfos by workManager.getWorkInfosForUniqueWorkLiveData("video_${project.deviceIp}_${project.id}")
+        .observeAsState()
+    val isGenerating = workInfos?.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED } == true
 
     val gridState = rememberLazyGridState()
     val listState = rememberLazyListState()
@@ -145,6 +165,27 @@ fun ProjectDetailScreen(
                     }
                 },
                 actions = {
+                    // Video Generation Button
+                    Box(contentAlignment = Alignment.Center) {
+                        IconButton(
+                            onClick = { showVideoDialog = true },
+                            enabled = !isGenerating && project.finishedFrame > 0
+                        ) {
+                            Icon(
+                                Icons.Default.Movie, 
+                                contentDescription = stringResource(R.string.generate_video),
+                                tint = if (isGenerating) MaterialTheme.colorScheme.outline else LocalContentColor.current
+                            )
+                        }
+                        if (isGenerating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(40.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
                     IconButton(onClick = { isAscending = !isAscending }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Sort,
@@ -217,6 +258,49 @@ fun ProjectDetailScreen(
         }
     }
 
+    if (showVideoDialog) {
+        GenerateVideoDialog(
+            onDismiss = { showVideoDialog = false },
+            onGenerate = { quality, fps ->
+                showVideoDialog = false
+                
+                // Show instant notification
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                val channelId = "video_generation"
+                val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                    .setSmallIcon(android.R.drawable.stat_sys_download)
+                    .setContentTitle(context.getString(R.string.generating_video) + " (0%)")
+                    .setContentText(context.getString(R.string.video_started))
+                    .setOngoing(true)
+                    .setSilent(true)
+                    .build()
+                notificationManager.notify(1001, notification)
+
+                val inputData = workDataOf(
+                    "projectName" to project.name,
+                    "deviceIp" to project.deviceIp,
+                    "projectId" to project.id,
+                    "frameNumbers" to (1..project.finishedFrame).map { n ->
+                        project.frameStart + (n - 1) * project.frameStep
+                    }.toIntArray(),
+                    "quality" to quality,
+                    "fps" to fps
+                )
+                
+                val workRequest = OneTimeWorkRequestBuilder<VideoGeneratorWorker>()
+                    .setInputData(inputData)
+                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                    .build()
+                
+                workManager.enqueueUniqueWork(
+                    "video_${project.deviceIp}_${project.id}",
+                    ExistingWorkPolicy.KEEP,
+                    workRequest
+                )
+            }
+        )
+    }
+
     selectedFrameNum?.let { frameNum ->
         val initialIndex = frameNumbers.indexOf(frameNum)
         if (initialIndex != -1) {
@@ -228,6 +312,73 @@ fun ProjectDetailScreen(
             )
         }
     }
+}
+
+@Composable
+fun GenerateVideoDialog(
+    onDismiss: () -> Unit,
+    onGenerate: (String, Int) -> Unit
+) {
+    var quality by remember { mutableStateOf("low") }
+    var fpsText by remember { mutableStateOf("30") }
+    var expanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.generate_video)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Quality Selection
+                Column {
+                    Text(stringResource(R.string.quality), style = MaterialTheme.typography.labelMedium)
+                    Box(modifier = Modifier.padding(top = 8.dp)) {
+                        OutlinedCard(
+                            onClick = { expanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (quality == "low") stringResource(R.string.low_quality) else stringResource(R.string.high_quality),
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.low_quality)) },
+                                onClick = { quality = "low"; expanded = false }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.high_quality)) },
+                                onClick = { quality = "high"; expanded = false }
+                            )
+                        }
+                    }
+                }
+
+                // FPS Input
+                OutlinedTextField(
+                    value = fpsText,
+                    onValueChange = { if (it.all { char -> char.isDigit() }) fpsText = it },
+                    label = { Text(stringResource(R.string.frame_rate)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onGenerate(quality, fpsText.toIntOrNull() ?: 30) },
+                enabled = fpsText.isNotEmpty()
+            ) {
+                Text(stringResource(R.string.generate))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
 }
 
 @Composable
@@ -435,8 +586,6 @@ fun ZoomableImageItem(
                             if (pastTouchSlop) {
                                 val centroid = event.calculateCentroid(useCurrent = false)
                                 if (zoomChange != 1f || panChange != Offset.Zero) {
-                                    // If we are at scale 1 and it's a single touch horizontal pan, 
-                                    // we should NOT consume it so the Pager can have it.
                                     val isMultiTouch = event.changes.size > 1
                                     val isHorizontalPan = abs(panChange.x) > abs(panChange.y)
                                     
@@ -485,7 +634,7 @@ fun ZoomableImageItem(
                 .data("http://${project.deviceIp}:28528/frame?id=${project.id}&frame=$frameNum&thumb=0")
                 .size(coil3.size.Size.ORIGINAL)
                 .build(),
-            contentDescription = "Full Frame $frameNum",
+            contentDescription = stringResource(R.string.frame_label, frameNum),
             onSuccess = { isLoaded = true },
             filterQuality = FilterQuality.High,
             modifier = Modifier
