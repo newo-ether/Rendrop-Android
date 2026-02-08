@@ -1,19 +1,19 @@
 [versions]
-agp = "8.13.0"
-coreSplashscreen = "1.0.1"
-kotlin = "2.2.10"
+agp = "9.0.0"
+coreSplashscreen = "1.2.0"
+kotlin = "2.3.10"
 coreKtx = "1.17.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
-lifecycleRuntimeKtx = "2.9.3"
-activityCompose = "1.10.1"
-composeBom = "2025.08.01"
-foundation = "1.9.0"
+lifecycleRuntimeKtx = "2.10.0"
+activityCompose = "1.12.3"
+composeBom = "2026.01.01"
+foundation = "1.10.2"
 material = "1.13.0"
-okhttp = "5.1.0"
-animation = "1.9.0"
-animationCore = "1.9.1"
+okhttp = "5.3.2"
+animation = "1.10.2"
+animationCore = "1.10.2"
 
 [libraries]
 androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
@@ -36,6 +36,9 @@ androidx-foundation = { group = "androidx.compose.foundation", name = "foundatio
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version = "3.3.0" }
+coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version = "3.3.0" }
+datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version = "1.2.0" }
 androidx-compose-animation = { group = "androidx.compose.animation", name = "animation", version.ref = "animation" }
 androidx-compose-animation-core = { group = "androidx.compose.animation", name = "animation-core", version.ref = "animationCore" }
 
@@ -43,5 +46,5 @@ androidx-compose-animation-core = { group = "androidx.compose.animation", name =
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version = "2.2.10" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version = "2.3.10" }
 

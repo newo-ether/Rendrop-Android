@@ -5,10 +5,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.annotation.RequiresPermission
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -18,6 +17,12 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+
+private val client = OkHttpClient.Builder()
+    .connectTimeout(2, TimeUnit.SECONDS)
+    .readTimeout(5, TimeUnit.SECONDS)
+    .build()
 
 @Serializable
 data class ProjectInfo(
@@ -35,6 +40,7 @@ data class ProjectInfo(
     val renderEngine: String,
     val finishedFrame: Int,
     val totalFrame: Int,
+    val deviceIp: String = "",
 )
 
 fun isValidIp(ip: String): Boolean {
@@ -61,36 +67,38 @@ fun intToIp(ip: Int): String {
 }
 
 fun getHostName(ip: String): String? {
-    try {
+    return try {
         val inetAddress = InetAddress.getByName(ip)
-        val hostName = inetAddress.hostName
-        return hostName
-    }
-    catch (_: Exception) {
-        return null
+        inetAddress.hostName
+    } catch (_: Exception) {
+        null
     }
 }
 
 @RequiresPermission(Manifest.permission.ACCESS_NETWORK_STATE)
-fun getSubnet(): List<String> {
-    val cm = MainActivity.instance.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+fun getSubnet(context: Context): List<String> {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     val network = cm.activeNetwork ?: return emptyList()
     val capabilities = cm.getNetworkCapabilities(network) ?: return emptyList()
 
-    if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return emptyList()
+    // Support both WiFi and Ethernet
+    val hasWifi = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    val hasEthernet = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    
+    if (!hasWifi && !hasEthernet) return emptyList()
     if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return emptyList()
 
     val ipList: MutableList<String> = mutableListOf()
     val linkProperties = cm.getLinkProperties(network) ?: return emptyList()
     for (linkAddress in linkProperties.linkAddresses) {
-        if (linkAddress == null)
-        {
-            continue
-        }
+        if (linkAddress == null) continue
         val address = linkAddress.address
         if (address is Inet4Address) {
             val ip = address.hostAddress ?: continue
             val prefixLength = linkAddress.prefixLength
+            // Only scan subnets with prefix >= 24 (max 256 IPs)
+            if (prefixLength < 24) continue
+            
             val mask = -1 shl (32 - prefixLength)
             val subnetMask = String.format(
                 Locale.US,
@@ -118,19 +126,24 @@ fun getSubnetIps(ip: String, mask: String): List<String> {
     return ipList
 }
 
-suspend fun scanLanDevices(): List<Pair<String, String>> = coroutineScope {
-    val subnet = getSubnet()
+suspend fun scanLanDevices(context: Context): List<Pair<String, String>> = coroutineScope {
+    val subnet = getSubnet(context)
     val results = mutableListOf<Pair<String, String>>()
-    val jobs = subnet.map {
+    val semaphore = Semaphore(32)
+    
+    val jobs = subnet.map { ip ->
         async(Dispatchers.IO) {
-            try {
-                Socket().use { socket ->
-                    socket.connect(InetSocketAddress(it, 28528), 500)
-                    synchronized(results) {
-                        results.add(Pair(it, getHostName(it) ?: "未知设备"))
+            semaphore.withPermit {
+                try {
+                    Socket().use { socket ->
+                        socket.connect(InetSocketAddress(ip, 28528), 400)
+                        val name = getHostName(ip) ?: context.getString(R.string.unknown_device)
+                        synchronized(results) {
+                            results.add(Pair(ip, name))
+                        }
                     }
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
         }
     }
     jobs.awaitAll()
@@ -139,20 +152,31 @@ suspend fun scanLanDevices(): List<Pair<String, String>> = coroutineScope {
 
 fun fetchProjectsFromDevice(ip: String): List<ProjectInfo> {
     return try {
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(ip, 28528), 500)
-        }
-
-        val client = OkHttpClient()
         val req = Request.Builder()
             .url("http://$ip:28528/projects")
             .build()
         client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return emptyList()
             val body = resp.body.string()
-            Json.decodeFromString<List<ProjectInfo>>(body)
+            Json.decodeFromString<List<ProjectInfo>>(body).map { it.copy(deviceIp = ip) }
         }
     } catch (_: Exception) {
         emptyList()
+    }
+}
+
+fun fetchProjectDetail(ip: String, id: Int): ProjectInfo? {
+    return try {
+        val req = Request.Builder()
+            .url("http://$ip:28528/projects/$id")
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return null
+            val body = resp.body.string()
+            Json.decodeFromString<ProjectInfo>(body).copy(deviceIp = ip)
+        }
+    } catch (_: Exception) {
+        null
     }
 }
 

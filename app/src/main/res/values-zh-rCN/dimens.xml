@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="fab_collapsed_width">56dp</dimen>
+    <dimen name="fab_expanded_width">155dp</dimen>
+</resources>

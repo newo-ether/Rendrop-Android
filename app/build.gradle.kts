@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -11,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.newoether.rendrop"
-        minSdk = 23
+        minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -28,13 +27,10 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = "11"
     }
 
     buildFeatures {
@@ -60,11 +56,18 @@ dependencies {
     // OkHttp
     implementation(libs.okhttp)
 
+    // Coil
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+
     // Splash screen
     implementation(libs.androidx.core.splashscreen)
 
     // Material
     implementation(libs.material)
+
+    // DataStore
+    implementation(libs.datastore.preferences)
 
     // Animation
     implementation(libs.androidx.compose.animation)
