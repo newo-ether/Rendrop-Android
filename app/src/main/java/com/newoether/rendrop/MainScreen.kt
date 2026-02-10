@@ -383,7 +383,7 @@ fun FabMenu(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Add,
-                            contentDescription = "Add",
+                            contentDescription = stringResource(R.string.add),
                             modifier = Modifier.rotate(fabRotation)
                         )
                     }
@@ -848,7 +848,9 @@ fun DeviceList(
                             }
                             DropdownMenu(
                                 expanded = showMenu,
-                                onDismissRequest = { showMenu = false }
+                                onDismissRequest = { showMenu = false },
+                                shape = MaterialTheme.shapes.large,
+                                offset = DpOffset(x = (-8).dp, y = 0.dp)
                             ) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.edit)) },
@@ -910,7 +912,9 @@ fun ProjectList(
                 if (ipList.isNotEmpty()) {
                     val allProjects = withContext(Dispatchers.IO) { fetchAllProjects(ipList) }
                     val currentIps = devices.map { it.first }.toSet()
-                    onProjectsChange(allProjects.filter { it.deviceIp in currentIps })
+                    val filteredProjects = allProjects.filter { it.deviceIp in currentIps }
+
+                    onProjectsChange(filteredProjects)
                 }
             } finally {
                 if (showLoading) {
@@ -1122,7 +1126,7 @@ fun ProjectCard(project: ProjectInfo, onClick: (ProjectInfo) -> Unit) {
                 ) {
                     SubcomposeAsyncImage(
                         model = thumbnailUrl,
-                        contentDescription = "Project Thumbnail",
+                        contentDescription = stringResource(R.string.project_thumbnail),
                         filterQuality = FilterQuality.High,
                         modifier = Modifier
                             .fillMaxSize()

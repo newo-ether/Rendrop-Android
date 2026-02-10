@@ -17,13 +17,19 @@ import androidx.core.content.FileProvider
 import androidx.work.*
 import io.microshow.rxffmpeg.RxFFmpegInvoke
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicInteger
 
 class VideoGeneratorWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -55,47 +61,70 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
         try {
             // 1. Download frames
             val thumbParam = if (quality == "low") 1 else 0
-            var downloadedCount = 0
+            val downloadedCount = AtomicInteger(0)
             var detectedExtension = "jpg"
-            
-            for ((index, frameNum) in frameNumbers.withIndex()) {
-                if (isStopped) return Result.failure()
-                
-                try {
-                    val url = "http://$deviceIp:28528/frame?id=$projectId&frame=$frameNum&thumb=$thumbParam"
-                    val request = Request.Builder().url(url).build()
-                    httpClient.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            if (index == 0) {
-                                val contentType = response.header("Content-Type")
-                                detectedExtension = if (contentType?.contains("png") == true) "png" else "jpg"
-                            }
-                            
-                            val file = File(tempDir, "frame_${String.format("%05d", downloadedCount)}.$detectedExtension")
-                            response.body?.byteStream()?.use { input ->
-                                FileOutputStream(file).use { output ->
-                                    input.copyTo(output)
+            val extensionLock = Any()
+            val semaphore = Semaphore(5) // Limit parallel downloads
+
+            coroutineScope {
+                val jobs = frameNumbers.mapIndexed { index, frameNum ->
+                    async(Dispatchers.IO) {
+                        if (isStopped) return@async
+
+                        semaphore.withPermit {
+                            try {
+                                val url = "http://$deviceIp:28528/frame?id=$projectId&frame=$frameNum&thumb=$thumbParam"
+                                val request = Request.Builder().url(url).build()
+                                httpClient.newCall(request).execute().use { response ->
+                                    if (response.isSuccessful) {
+                                        synchronized(extensionLock) {
+                                            if (downloadedCount.get() == 0) {
+                                                val contentType = response.header("Content-Type")
+                                                detectedExtension = if (contentType?.contains("png") == true) "png" else "jpg"
+                                            }
+                                        }
+
+                                        // Save to temporary file with index to preserve order
+                                        val tempFile = File(tempDir, "raw_${index}.tmp")
+                                        response.body?.byteStream()?.use { input ->
+                                            FileOutputStream(tempFile).use { output ->
+                                                input.copyTo(output)
+                                            }
+                                        }
+
+                                        val count = downloadedCount.incrementAndGet()
+                                        // Update notification periodically
+                                        if (count % 2 == 0 || count == frameNumbers.size) {
+                                            try {
+                                                setForeground(createForegroundInfo(count, frameNumbers.size))
+                                            } catch (_: Exception) {
+                                            }
+                                        }
+                                    }
                                 }
-                            }
-                            if (file.exists() && file.length() > 0) {
-                                downloadedCount++
+                            } catch (e: Exception) {
+                                Log.e("VideoWorker", "Download failed for frame $frameNum", e)
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e("VideoWorker", "Download failed for frame $frameNum", e)
                 }
-                
-                // Increased update frequency (every 2 frames)
-                if (index % 2 == 0 || index == frameNumbers.size - 1) {
-                    try {
-                        setForeground(createForegroundInfo(index + 1, frameNumbers.size))
-                    } catch (_: Exception) {}
+                jobs.awaitAll()
+            }
+
+            // Rename and sequence files for FFmpeg
+            val rawFiles = tempDir.listFiles { _, name -> name.startsWith("raw_") }
+                ?.sortedBy { it.name.removePrefix("raw_").removeSuffix(".tmp").toInt() }
+
+            var finalCount = 0
+            rawFiles?.forEach { file ->
+                val newFile = File(tempDir, "frame_${String.format("%05d", finalCount)}.$detectedExtension")
+                if (file.renameTo(newFile)) {
+                    finalCount++
                 }
             }
 
-            if (downloadedCount < 2) {
-                showFinalNotification(false, null, "Not enough frames.")
+            if (finalCount < 2) {
+                showFinalNotification(false, null, applicationContext.getString(R.string.error_not_enough_frames))
                 return Result.failure()
             }
 
@@ -108,7 +137,7 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
             val result = RxFFmpegInvoke.getInstance().runCommand(command, null)
             
             if (result != 0) {
-                showFinalNotification(false, null, "FFmpeg error $result")
+                showFinalNotification(false, null, applicationContext.getString(R.string.error_ffmpeg, result))
                 return Result.failure()
             }
 
@@ -116,10 +145,10 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
             val publicUri = saveVideoToPublicDownloads(tempOutputFile, "${projectName.replace(" ", "_")}_${System.currentTimeMillis()}.mp4")
             
             return if (publicUri != null) {
-                showFinalNotification(true, publicUri, "Video saved to Download/Rendrop")
+                showFinalNotification(true, publicUri, applicationContext.getString(R.string.video_saved_path))
                 Result.success()
             } else {
-                showFinalNotification(false, null, "Failed to save video file")
+                showFinalNotification(false, null, applicationContext.getString(R.string.error_save_video))
                 Result.failure()
             }
 
@@ -183,7 +212,7 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "Video Generation", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, applicationContext.getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_DEFAULT)
             notificationManager.createNotificationChannel(channel)
         }
     }
@@ -197,6 +226,7 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
             .setContentText(progressText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(progressText))
             .setProgress(total, current, false)
             .setOngoing(true)
             .setSilent(true)
@@ -225,6 +255,7 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
             .setSmallIcon(if (success) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
             .setContentTitle(title)
             .setContentText(message ?: "")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message ?: ""))
             .setAutoCancel(true)
 
         if (success && uri != null) {
@@ -243,6 +274,6 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
             builder.setContentIntent(pendingIntent)
         }
             
-        notificationManager.notify(notificationId + 1, builder.build())
+        notificationManager.notify(notificationId + 2, builder.build())
     }
 }

@@ -44,8 +44,23 @@
     <string name="frame_rate">帧率 (FPS)</string>
     <string name="generate">生成</string>
     <string name="video_started">视频生成已开始</string>
-    <string name="generating_video">正在生成视频...</string>
+    <string name="generating_video">正在生成视频…</string>
     <string name="video_success">视频生成成功！</string>
-    <string name="video_error">视频生成失败。</string>
+    <string name="video_error">视频生成失败！</string>
     <string name="downloading_frames">正在下载帧 (%1$d/%2$d)</string>
+    <string name="add">添加</string>
+    <string name="project_thumbnail">项目缩略图</string>
+    <string name="error_not_enough_frames">帧数不足无法生成视频！</string>
+    <string name="error_ffmpeg">FFmpeg 错误 %1$d</string>
+    <string name="video_saved_path">视频已保存至 Download/Rendrop</string>
+    <string name="error_save_video">无法保存视频文件</string>
+    <string name="notification_channel_name">视频生成</string>
+    <string name="channel_project_status">项目状态</string>
+    <string name="project_finished_title">项目完成</string>
+    <string name="project_finished_text">项目 %1$s 已完成渲染</string>
+    <string name="project_error_title">项目错误</string>
+    <string name="project_error_text">项目 %1$s 遇到错误</string>
+    <string name="monitor_service_channel_name">Rendrop 监视器</string>
+    <string name="monitor_service_title">Rendrop 监视器已激活</string>
+    <string name="monitor_service_text">正在扫描项目更新…</string>
 </resources>

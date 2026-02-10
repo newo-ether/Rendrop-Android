@@ -80,6 +80,7 @@ fun ProjectDetailScreen(
     var project by remember { mutableStateOf(initialProject) }
     var isGridView by rememberSaveable { mutableStateOf(true) }
     var isAscending by rememberSaveable { mutableStateOf(false) }
+    var sortVersion by rememberSaveable { mutableIntStateOf(0) }
     var refreshing by remember { mutableStateOf(false) }
     var selectedFrameNum by remember { mutableStateOf<Int?>(null) }
     var showVideoDialog by remember { mutableStateOf(false) }
@@ -93,8 +94,12 @@ fun ProjectDetailScreen(
         .observeAsState()
     val isGenerating = workInfos?.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED } == true
 
-    val gridState = rememberLazyGridState()
-    val listState = rememberLazyListState()
+    // Use key(sortVersion) to create a new state instance when sort order changes.
+    // This prevents the "shared state" bug during AnimatedContent transition where the
+    // exiting and entering lists fight over the same scroll state, causing stuck scrolling.
+    // It also automatically resets the scroll position to top (0) for the new sort order.
+    val gridState = key(sortVersion) { rememberLazyGridState() }
+    val listState = key(sortVersion) { rememberLazyListState() }
 
     val frameNumbers = remember(project.finishedFrame, isAscending) {
         val list = (1..project.finishedFrame).map { n ->
@@ -105,14 +110,6 @@ fun ProjectDetailScreen(
 
     BackHandler {
         onBack()
-    }
-
-    LaunchedEffect(isAscending, isGridView) {
-        if (isGridView) {
-            if (gridState.layoutInfo.totalItemsCount > 0) gridState.animateScrollToItem(0)
-        } else {
-            if (listState.layoutInfo.totalItemsCount > 0) listState.animateScrollToItem(0)
-        }
     }
 
     fun refreshProject() {
@@ -186,7 +183,10 @@ fun ProjectDetailScreen(
                         }
                     }
 
-                    IconButton(onClick = { isAscending = !isAscending }) {
+                    IconButton(onClick = { 
+                        isAscending = !isAscending 
+                        sortVersion++
+                    }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Sort,
                             contentDescription = stringResource(R.string.sort),
@@ -218,12 +218,12 @@ fun ProjectDetailScreen(
                 }
             } else {
                 AnimatedContent(
-                    targetState = isGridView to isAscending,
+                    targetState = Triple(isGridView, isAscending, sortVersion),
                     transitionSpec = {
-                        fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                        fadeIn(animationSpec = tween(300)) togetherWith fadeOut(animationSpec = tween(300))
                     },
                     label = "ViewAndSortSwitch"
-                ) { (targetGridView, _) ->
+                ) { (targetGridView, _, _) ->
                     if (targetGridView) {
                         LazyVerticalGrid(
                             state = gridState,
@@ -233,7 +233,7 @@ fun ProjectDetailScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            items(frameNumbers, key = { it }) { frameNum ->
+                            items(frameNumbers) { frameNum ->
                                 FrameIconItem(project, frameNum) {
                                     selectedFrameNum = frameNum
                                 }
@@ -246,7 +246,7 @@ fun ProjectDetailScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            items(frameNumbers, key = { it }) { frameNum ->
+                            items(frameNumbers) { frameNum ->
                                 FrameListItem(project, frameNum) {
                                     selectedFrameNum = frameNum
                                 }
@@ -259,6 +259,9 @@ fun ProjectDetailScreen(
     }
 
     if (showVideoDialog) {
+        val generatingVideoTitle = stringResource(R.string.generating_video)
+        val videoStartedText = stringResource(R.string.video_started)
+        
         GenerateVideoDialog(
             onDismiss = { showVideoDialog = false },
             onGenerate = { quality, fps ->
@@ -269,8 +272,9 @@ fun ProjectDetailScreen(
                 val channelId = "video_generation"
                 val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
                     .setSmallIcon(android.R.drawable.stat_sys_download)
-                    .setContentTitle(context.getString(R.string.generating_video) + " (0%)")
-                    .setContentText(context.getString(R.string.video_started))
+                    .setContentTitle("$generatingVideoTitle (0%)")
+                    .setContentText(videoStartedText)
+                    .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(videoStartedText))
                     .setOngoing(true)
                     .setSilent(true)
                     .build()
@@ -301,12 +305,16 @@ fun ProjectDetailScreen(
         )
     }
 
+    val viewerFrameNumbers = remember(selectedFrameNum) {
+        frameNumbers
+    }
+
     selectedFrameNum?.let { frameNum ->
-        val initialIndex = frameNumbers.indexOf(frameNum)
+        val initialIndex = viewerFrameNumbers.indexOf(frameNum)
         if (initialIndex != -1) {
             FullScreenImageViewer(
                 project = project,
-                frameNumbers = frameNumbers,
+                frameNumbers = viewerFrameNumbers,
                 initialIndex = initialIndex,
                 onDismiss = { selectedFrameNum = null }
             )

@@ -1,6 +1,7 @@
 package com.newoether.rendrop
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -8,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.work.WorkManager
 import coil3.SingletonImageLoader
@@ -21,7 +23,11 @@ class MainActivity : ComponentActivity() {
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { _ -> }
+    ) { isGranted ->
+        if (isGranted) {
+            startMonitorService()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,10 +41,24 @@ class MainActivity : ComponentActivity() {
         clearImageCache()
         cancelOngoingWork()
 
+        // Start background monitor if we already have permission
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || 
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            startMonitorService()
+        }
+
         setContent {
             RendropTheme {
                 MainScreen()
             }
+        }
+    }
+
+    private fun startMonitorService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(Intent(this, ProjectMonitorService::class.java))
+        } else {
+            startService(Intent(this, ProjectMonitorService::class.java))
         }
     }
 
