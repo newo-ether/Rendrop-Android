@@ -35,6 +35,7 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
 
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val channelId = "video_generation"
+    private val resultChannelId = "video_generation_result"
     private val notificationId = 1001
 
     private val httpClient = OkHttpClient()
@@ -50,7 +51,7 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
         val tempDir = File(applicationContext.cacheDir, "video_temp_${System.currentTimeMillis()}")
         tempDir.mkdirs()
 
-        createNotificationChannel()
+        createNotificationChannels()
         
         try {
             setForeground(createForegroundInfo(0, frameNumbers.size))
@@ -210,10 +211,12 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
         }
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, applicationContext.getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_DEFAULT)
-            notificationManager.createNotificationChannel(channel)
+            val progressChannel = NotificationChannel(channelId, applicationContext.getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_LOW)
+            val resultChannel = NotificationChannel(resultChannelId, applicationContext.getString(R.string.video_success), NotificationManager.IMPORTANCE_HIGH)
+            notificationManager.createNotificationChannel(progressChannel)
+            notificationManager.createNotificationChannel(resultChannel)
         }
     }
 
@@ -251,11 +254,13 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
     private fun showFinalNotification(success: Boolean, uri: Uri?, message: String?) {
         val title = if (success) applicationContext.getString(R.string.video_success) else applicationContext.getString(R.string.video_error)
         
-        val builder = NotificationCompat.Builder(applicationContext, channelId)
+        val builder = NotificationCompat.Builder(applicationContext, resultChannelId)
             .setSmallIcon(if (success) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
             .setContentTitle(title)
             .setContentText(message ?: "")
             .setStyle(NotificationCompat.BigTextStyle().bigText(message ?: ""))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setAutoCancel(true)
 
         if (success && uri != null) {

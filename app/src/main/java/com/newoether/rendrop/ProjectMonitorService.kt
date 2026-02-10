@@ -111,14 +111,14 @@ class ProjectMonitorService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
              if (notificationManager.getNotificationChannel("project_status") == null) {
                  val name = getString(R.string.channel_project_status)
-                 val channel = NotificationChannel("project_status", name, NotificationManager.IMPORTANCE_DEFAULT)
+                 val channel = NotificationChannel("project_status", name, NotificationManager.IMPORTANCE_HIGH)
                  notificationManager.createNotificationChannel(channel)
              }
         }
 
         val title = if (isSuccess) getString(R.string.project_finished_title) else getString(R.string.project_error_title)
         val text = if (isSuccess) getString(R.string.project_finished_text, project.name) else getString(R.string.project_error_text, project.name)
-        val icon = if (isSuccess) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error
+        val icon = R.drawable.ic_launcher_foreground
 
         val intent = packageManager.getLaunchIntentForPackage(packageName)
         val pendingIntent = PendingIntent.getActivity(this, 2, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -128,7 +128,8 @@ class ProjectMonitorService : Service() {
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
