@@ -34,9 +34,9 @@ import java.util.concurrent.atomic.AtomicInteger
 class VideoGeneratorWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    private var workerNotificationId = 1001
     private val channelId = "video_generation"
     private val resultChannelId = "video_generation_result"
-    private val notificationId = 1001
 
     private val httpClient = OkHttpClient()
 
@@ -47,6 +47,9 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
         val frameNumbers = inputData.getIntArray("frameNumbers") ?: return Result.failure()
         val quality = inputData.getString("quality") ?: "low"
         val fps = inputData.getInt("fps", 24)
+
+        // Use a unique notification ID for this project's progress to avoid overwriting others
+        workerNotificationId = ("video_progress_" + deviceIp + "_" + projectId).hashCode()
 
         val tempDir = File(applicationContext.cacheDir, "video_temp_${System.currentTimeMillis()}")
         tempDir.mkdirs()
@@ -245,9 +248,9 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
             0
         }
         return if (type != 0) {
-            ForegroundInfo(notificationId, createNotification(current, total), type)
+            ForegroundInfo(workerNotificationId, createNotification(current, total), type)
         } else {
-            ForegroundInfo(notificationId, createNotification(current, total))
+            ForegroundInfo(workerNotificationId, createNotification(current, total))
         }
     }
 
@@ -279,6 +282,8 @@ class VideoGeneratorWorker(context: Context, params: WorkerParameters) : Corouti
             builder.setContentIntent(pendingIntent)
         }
             
-        notificationManager.notify(notificationId + 2, builder.build())
+        // Use a separate unique ID with a timestamp for the result so every export result is kept
+        val resultNotificationId = ("video_result_" + (inputData.getString("deviceIp") ?: "") + "_" + inputData.getInt("projectId", -1) + "_" + System.currentTimeMillis()).hashCode()
+        notificationManager.notify(resultNotificationId, builder.build())
     }
 }

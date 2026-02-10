@@ -270,6 +270,8 @@ fun ProjectDetailScreen(
                 // Show instant notification
                 val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
                 val channelId = "video_generation"
+                val videoNotificationId = ("video_progress_" + project.deviceIp + "_" + project.id).hashCode()
+                
                 val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
                     .setSmallIcon(android.R.drawable.stat_sys_download)
                     .setContentTitle("$generatingVideoTitle (0%)")
@@ -278,7 +280,7 @@ fun ProjectDetailScreen(
                     .setOngoing(true)
                     .setSilent(true)
                     .build()
-                notificationManager.notify(1001, notification)
+                notificationManager.notify(videoNotificationId, notification)
 
                 val inputData = workDataOf(
                     "projectName" to project.name,

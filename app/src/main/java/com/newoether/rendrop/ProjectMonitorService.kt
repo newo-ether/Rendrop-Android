@@ -134,7 +134,8 @@ class ProjectMonitorService : Service() {
             .setAutoCancel(true)
             .build()
 
-        val notificationId = (project.deviceIp + project.id).hashCode()
+        // Use a unique ID based on type, IP, project ID and timestamp to ensure every event is kept
+        val notificationId = ("status_" + project.deviceIp + "_" + project.id + "_" + System.currentTimeMillis()).hashCode()
         notificationManager.notify(notificationId, notification)
     }
 
