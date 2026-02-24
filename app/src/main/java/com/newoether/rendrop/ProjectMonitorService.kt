@@ -62,7 +62,7 @@ class ProjectMonitorService : Service() {
             .build()
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         } else {
             0
         }
