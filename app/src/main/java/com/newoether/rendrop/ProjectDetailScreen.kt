@@ -3,16 +3,10 @@ package com.newoether.rendrop
 import androidx.activity.compose.BackHandler
 import android.content.Context
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateCentroid
-import androidx.compose.foundation.gestures.calculateCentroidSize
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateRotation
-import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -50,9 +44,11 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -65,6 +61,7 @@ import androidx.work.*
 import coil3.compose.SubcomposeAsyncImage
 import coil3.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,10 +105,6 @@ fun ProjectDetailScreen(
         if (isAscending) list else list.reversed()
     }
 
-    BackHandler {
-        onBack()
-    }
-
     fun refreshProject() {
         scope.launch {
             refreshing = true
@@ -143,117 +136,156 @@ fun ProjectDetailScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(project.name, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            stringResource(R.string.frames_finished, project.finishedFrame, project.totalFrame),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-                actions = {
-                    // Video Generation Button
-                    Box(contentAlignment = Alignment.Center) {
-                        IconButton(
-                            onClick = { showVideoDialog = true },
-                            enabled = !isGenerating && project.finishedFrame > 0
-                        ) {
-                            Icon(
-                                Icons.Default.Movie, 
-                                contentDescription = stringResource(R.string.generate_video),
-                                tint = if (isGenerating) MaterialTheme.colorScheme.outline else LocalContentColor.current
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(project.name, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                stringResource(R.string.frames_finished, project.finishedFrame, project.totalFrame),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        if (isGenerating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(40.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-
-                    IconButton(onClick = { 
-                        isAscending = !isAscending 
-                        sortVersion++
-                    }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Sort,
-                            contentDescription = stringResource(R.string.sort),
-                            tint = if (isAscending) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                        )
-                    }
-                    IconButton(onClick = { isGridView = !isGridView }) {
-                        Icon(
-                            imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                            contentDescription = if (isGridView) stringResource(R.string.list_view) else stringResource(R.string.grid_view)
-                        )
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
-        PullToRefreshBox(
-            isRefreshing = refreshing,
-            onRefresh = { refreshProject() },
-            state = rememberPullToRefreshState(),
-            modifier = Modifier.padding(innerPadding).fillMaxSize()
-        ) {
-            if (project.finishedFrame == 0) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(stringResource(R.string.no_finished_frames), style = MaterialTheme.typography.bodyLarge)
-                }
-            } else {
-                AnimatedContent(
-                    targetState = Triple(isGridView, isAscending, sortVersion),
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(300)) togetherWith fadeOut(animationSpec = tween(300))
                     },
-                    label = "ViewAndSortSwitch"
-                ) { (targetGridView, _, _) ->
-                    if (targetGridView) {
-                        LazyVerticalGrid(
-                            state = gridState,
-                            columns = GridCells.Adaptive(minSize = 100.dp),
-                            contentPadding = PaddingValues(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            items(frameNumbers) { frameNum ->
-                                FrameIconItem(project, frameNum) {
-                                    selectedFrameNum = frameNum
-                                }
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                        }
+                    },
+                    actions = {
+                        // Video Generation Button
+                        Box(contentAlignment = Alignment.Center) {
+                            IconButton(
+                                onClick = { showVideoDialog = true },
+                                enabled = !isGenerating && project.finishedFrame > 0
+                            ) {
+                                Icon(
+                                    Icons.Default.Movie, 
+                                    contentDescription = stringResource(R.string.generate_video),
+                                    tint = if (isGenerating) MaterialTheme.colorScheme.outline else LocalContentColor.current
+                                )
+                            }
+                            if (isGenerating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(40.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
-                    } else {
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            items(frameNumbers) { frameNum ->
-                                FrameListItem(project, frameNum) {
-                                    selectedFrameNum = frameNum
+
+                        IconButton(onClick = { 
+                            isAscending = !isAscending 
+                            sortVersion++
+                        }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Sort,
+                                contentDescription = stringResource(R.string.sort),
+                                tint = if (isAscending) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                            )
+                        }
+                        IconButton(onClick = { isGridView = !isGridView }) {
+                            Icon(
+                                imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
+                                contentDescription = if (isGridView) stringResource(R.string.list_view) else stringResource(R.string.grid_view)
+                            )
+                        }
+                    }
+                )
+            }
+        ) { innerPadding ->
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { refreshProject() },
+                state = rememberPullToRefreshState(),
+                modifier = Modifier.padding(innerPadding).fillMaxSize()
+            ) {
+                if (project.finishedFrame == 0) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(stringResource(R.string.no_finished_frames), style = MaterialTheme.typography.bodyLarge)
+                    }
+                } else {
+                    AnimatedContent(
+                        targetState = Triple(isGridView, isAscending, sortVersion),
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(300)) togetherWith fadeOut(animationSpec = tween(300))
+                        },
+                        label = "ViewAndSortSwitch"
+                    ) { (targetGridView, _, _) ->
+                        if (targetGridView) {
+                            LazyVerticalGrid(
+                                state = gridState,
+                                columns = GridCells.Adaptive(minSize = 100.dp),
+                                contentPadding = PaddingValues(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(frameNumbers) { frameNum ->
+                                    FrameIconItem(project, frameNum) {
+                                        selectedFrameNum = frameNum
+                                    }
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                state = listState,
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(frameNumbers) { frameNum ->
+                                    FrameListItem(project, frameNum) {
+                                        selectedFrameNum = frameNum
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+
+        val viewerFrameNumbers = remember(selectedFrameNum) {
+            frameNumbers
+        }
+
+        AnimatedVisibility(
+            visible = selectedFrameNum != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            val frameNum = selectedFrameNum ?: return@AnimatedVisibility
+            val initialIndex = remember(frameNum) { viewerFrameNumbers.indexOf(frameNum) }
+            
+            // Set status bar icons to light when viewer is active
+            val view = androidx.compose.ui.platform.LocalView.current
+            DisposableEffect(Unit) {
+                val window = (view.context as? android.app.Activity)?.window
+                if (window != null) {
+                    val controller = androidx.core.view.WindowCompat.getInsetsController(window, view)
+                    val isAppearanceLightStatusBars = controller.isAppearanceLightStatusBars
+                    controller.isAppearanceLightStatusBars = false
+                    onDispose {
+                        controller.isAppearanceLightStatusBars = isAppearanceLightStatusBars
+                    }
+                } else onDispose {}
+            }
+
+            if (initialIndex != -1) {
+                FullScreenImageViewer(
+                    project = project,
+                    frameNumbers = viewerFrameNumbers,
+                    initialIndex = initialIndex,
+                    onDismiss = { selectedFrameNum = null }
+                )
             }
         }
     }
@@ -307,20 +339,8 @@ fun ProjectDetailScreen(
         )
     }
 
-    val viewerFrameNumbers = remember(selectedFrameNum) {
-        frameNumbers
-    }
-
-    selectedFrameNum?.let { frameNum ->
-        val initialIndex = viewerFrameNumbers.indexOf(frameNum)
-        if (initialIndex != -1) {
-            FullScreenImageViewer(
-                project = project,
-                frameNumbers = viewerFrameNumbers,
-                initialIndex = initialIndex,
-                onDismiss = { selectedFrameNum = null }
-            )
-        }
+    BackHandler(enabled = selectedFrameNum == null) {
+        onBack()
     }
 }
 
@@ -483,57 +503,74 @@ fun FullScreenImageViewer(
 ) {
     val pagerState = rememberPagerState(initialPage = initialIndex) { frameNumbers.size }
     
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    BackHandler {
+        onDismiss()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                // Consume all touch events to prevent clicking things behind the viewer
+                detectTapGestures { }
+            }
     ) {
+        var currentScale by remember { mutableFloatStateOf(1f) }
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            beyondViewportPageCount = 1,
+            userScrollEnabled = currentScale <= 1.05f
+        ) { page ->
+            val frameNum = frameNumbers[page]
+            ZoomableImageItem(
+                project = project,
+                frameNum = frameNum,
+                isPagerScrolling = pagerState.isScrollInProgress,
+                onScaleChanged = { if (page == pagerState.currentPage) currentScale = it }
+            )
+        }
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-        ) {
-            var currentScale by remember { mutableFloatStateOf(1f) }
-
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-                beyondViewportPageCount = 1,
-                userScrollEnabled = currentScale <= 1.05f
-            ) { page ->
-                val frameNum = frameNumbers[page]
-                ZoomableImageItem(
-                    project = project,
-                    frameNum = frameNum,
-                    isPagerScrolling = pagerState.isScrollInProgress,
-                    onScaleChanged = { if (page == pagerState.currentPage) currentScale = it }
-                )
-            }
-
-            Box(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .align(Alignment.TopStart),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = onDismiss,
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = Color.Black.copy(alpha = 0.5f),
-                            contentColor = Color.White
+                .fillMaxWidth()
+                .align(Alignment.TopStart)
+                .background(
+                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Black.copy(alpha = 0.9f),
+                            Color.Black.copy(alpha = 0.8f),
+                            Color.Black.copy(alpha = 0.6f),
+                            Color.Black.copy(alpha = 0.4f),
+                            Color.Black.copy(alpha = 0.2f),
+                            Color.Transparent
                         )
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close))
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text(
-                        text = "${project.name} - " + stringResource(R.string.frame_label, frameNumbers[pagerState.currentPage]),
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.shadow(4.dp)
                     )
+                )
+        ) {
+            Row(
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onDismiss,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = Color.Transparent,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close))
                 }
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = "${project.name} - " + stringResource(R.string.frame_label, frameNumbers[pagerState.currentPage]),
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium
+                )
             }
         }
     }
@@ -546,96 +583,272 @@ fun ZoomableImageItem(
     isPagerScrolling: Boolean,
     onScaleChanged: (Float) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    
     var scale by remember(frameNum) { mutableFloatStateOf(1f) }
-    var offset by remember(frameNum) { mutableStateOf(Offset.Zero) }
-    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var offsetX by remember(frameNum) { mutableFloatStateOf(0f) }
+    var offsetY by remember(frameNum) { mutableFloatStateOf(0f) }
+    
+    var containerSize by remember { mutableStateOf(Size.Zero) }
+    var imageSize by remember { mutableStateOf(Size.Zero) }
+    var animationJob by remember { mutableStateOf<Job?>(null) }
+    var lastCentroid by remember { mutableStateOf(Offset.Unspecified) }
     var isLoaded by remember(frameNum) { mutableStateOf(false) }
+
+    // Use project resolution as fallback image size
+    LaunchedEffect(project) {
+        if (imageSize == Size.Zero && project.resolutionX > 0 && project.resolutionY > 0) {
+            imageSize = Size(project.resolutionX.toFloat(), project.resolutionY.toFloat())
+        }
+    }
+
+    fun getMaxOffsets(currentScale: Float): Pair<Float, Float> {
+        if (imageSize.width <= 0f || imageSize.height <= 0f || containerSize.width <= 0f || containerSize.height <= 0f) return 0f to 0f
+        val imageAspectRatio = imageSize.width / imageSize.height
+        val containerAspectRatio = containerSize.width / containerSize.height
+        
+        val contentWidth = if (imageAspectRatio > containerAspectRatio) containerSize.width else containerSize.height * imageAspectRatio
+        val contentHeight = if (imageAspectRatio > containerAspectRatio) containerSize.width / imageAspectRatio else containerSize.height
+        
+        val maxX = (contentWidth * currentScale - containerSize.width).coerceAtLeast(0f) / 2f
+        val maxY = (contentHeight * currentScale - containerSize.height).coerceAtLeast(0f) / 2f
+        
+        return if (maxX.isFinite() && maxY.isFinite()) maxX to maxY else 0f to 0f
+    }
+
+    fun rubberBandValue(fullDelta: Float, dimension: Float): Float {
+        if (dimension <= 0f) return 0f
+        val c = 0.75f
+        return (fullDelta * c * dimension) / (dimension + c * fullDelta)
+    }
 
     LaunchedEffect(scale) {
         onScaleChanged(scale)
     }
 
     LaunchedEffect(isPagerScrolling) {
-        if (isPagerScrolling && scale != 1f) {
+        if (isPagerScrolling && (scale != 1f || offsetX != 0f || offsetY != 0f)) {
+            animationJob?.cancel()
             scale = 1f
-            offset = Offset.Zero
+            offsetX = 0f
+            offsetY = 0f
         }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onSizeChanged { containerSize = it }
+            .onSizeChanged { containerSize = Size(it.width.toFloat(), it.height.toFloat()) }
             .pointerInput(isLoaded, frameNum) {
                 if (!isLoaded) return@pointerInput
-                
-                awaitEachGesture {
-                    var zoom = 1f
-                    var pan = Offset.Zero
-                    var pastTouchSlop = false
-                    val touchSlop = viewConfiguration.touchSlop
-
-                    awaitFirstDown(requireUnconsumed = false)
-                    do {
-                        val event = awaitPointerEvent()
-                        val canceled = event.changes.any { it.isConsumed }
-                        if (!canceled) {
-                            val zoomChange = event.calculateZoom()
-                            val panChange = event.calculatePan()
-
-                            if (!pastTouchSlop) {
-                                zoom *= zoomChange
-                                pan += panChange
-                                val centroidSize = event.calculateCentroidSize(useCurrent = false)
-                                val dragAmount = pan.getDistance()
-                                if (zoom != 1f || dragAmount > touchSlop) {
-                                    pastTouchSlop = true
-                                }
-                            }
-
-                            if (pastTouchSlop) {
-                                val centroid = event.calculateCentroid(useCurrent = false)
-                                if (zoomChange != 1f || panChange != Offset.Zero) {
-                                    val isMultiTouch = event.changes.size > 1
-                                    val isHorizontalPan = abs(panChange.x) > abs(panChange.y)
+                detectTapGestures(
+                    onDoubleTap = { tapOffset ->
+                        animationJob?.cancel()
+                        animationJob = scope.launch {
+                            val startScale = scale
+                            val startOffsetX = offsetX
+                            val startOffsetY = offsetY
+                            
+                            if (startScale > 1.05f) {
+                                // Zoom Out to 1x
+                                val targetScale = 1f
+                                val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+                                
+                                AnimationState(startScale).animateTo(
+                                    targetScale,
+                                    spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
+                                ) {
+                                    scale = value
+                                    val r = if (startScale != 0f) value / startScale else 1f
+                                    val unconstrainedX = startOffsetX * r + (tapOffset.x - center.x) * (1f - r)
+                                    val unconstrainedY = startOffsetY * r + (tapOffset.y - center.y) * (1f - r)
                                     
-                                    if (scale > 1f || isMultiTouch || !isHorizontalPan) {
-                                        val oldScale = scale
-                                        scale = (scale * zoomChange).coerceIn(1f, 5f)
-
-                                        if (scale > 1f) {
-                                            val imageAspectRatio = if (project.resolutionY > 0) project.resolutionX.toFloat() / project.resolutionY.toFloat() else 1f
-                                            val containerAspectRatio = if (containerSize.height > 0) containerSize.width.toFloat() / containerSize.height.toFloat() else 1f
-                                            val contentWidth: Float
-                                            val contentHeight: Float
-                                            if (imageAspectRatio > containerAspectRatio) {
-                                                contentWidth = containerSize.width.toFloat()
-                                                contentHeight = containerSize.width.toFloat() / imageAspectRatio
-                                            } else {
-                                                contentHeight = containerSize.height.toFloat()
-                                                contentWidth = containerSize.height.toFloat() * imageAspectRatio
-                                            }
-
-                                            val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
-                                            val r = scale / oldScale
-                                            val newOffset = offset * r + (centroid - center) * (1f - r) + panChange
-                                            
-                                            val maxX = (contentWidth * scale - containerSize.width).coerceAtLeast(0f) / 2
-                                            val maxY = (contentHeight * scale - containerSize.height).coerceAtLeast(0f) / 2
-                                            
-                                            offset = Offset(
-                                                newOffset.x.coerceIn(-maxX, maxX),
-                                                newOffset.y.coerceIn(-maxY, maxY)
-                                            )
-                                            event.changes.forEach { if (it.positionChanged()) it.consume() }
-                                        } else {
-                                            offset = Offset.Zero
-                                        }
-                                    }
+                                    val (maxX, maxY) = getMaxOffsets(value)
+                                    offsetX = unconstrainedX.coerceIn(-maxX, maxX)
+                                    offsetY = unconstrainedY.coerceIn(-maxY, maxY)
+                                }
+                            } else {
+                                // Zoom In to 3x
+                                val targetScale = 3f
+                                val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+                                
+                                AnimationState(startScale).animateTo(
+                                    targetScale,
+                                    spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
+                                ) {
+                                    scale = value
+                                    val r = if (startScale != 0f) value / startScale else 1f
+                                    offsetX = startOffsetX * r + (tapOffset.x - center.x) * (1f - r)
+                                    offsetY = startOffsetY * r + (tapOffset.y - center.y) * (1f - r)
                                 }
                             }
                         }
-                    } while (!canceled && event.changes.any { it.pressed })
+                    }
+                )
+            }
+            .pointerInput(isLoaded, frameNum) {
+                if (!isLoaded) return@pointerInput
+                val velocityTracker = VelocityTracker()
+
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    animationJob?.cancel()
+
+                    var pastTouchSlop = false
+                    val touchSlop = viewConfiguration.touchSlop
+                    lastCentroid = Offset.Unspecified
+
+                    var logicalScale = scale
+                    var logicalOffsetX = offsetX
+                    var logicalOffsetY = offsetY
+                    
+                    do {
+                        val event = awaitPointerEvent()
+                        val zoomChange = event.calculateZoom()
+                        val panChange = event.calculatePan()
+
+                        if (!pastTouchSlop) {
+                            val panAmount = panChange.getDistance()
+                            if (zoomChange != 1f || panAmount > touchSlop) {
+                                pastTouchSlop = true
+                            }
+                        }
+                        
+                        if (pastTouchSlop) {
+                            val centroid = event.calculateCentroid(useCurrent = false)
+                            if (zoomChange != 1f && centroid != Offset.Unspecified) {
+                                lastCentroid = centroid
+                            }
+                            
+                            if (zoomChange != 1f || panChange != Offset.Zero) {
+                                val oldVisualScale = scale
+                                logicalScale = (logicalScale * zoomChange).coerceIn(0.1f, 30f)
+                                
+                                val newVisualScale = if (logicalScale < 1f) {
+                                    1f - rubberBandValue(1f - logicalScale, 1f)
+                                } else if (logicalScale > 10f) {
+                                    10f + rubberBandValue(logicalScale - 10f, 5f)
+                                } else {
+                                    logicalScale
+                                }
+                                
+                                val r = if (oldVisualScale != 0f) newVisualScale / oldVisualScale else 1f
+                                val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+
+                                logicalOffsetX = logicalOffsetX * r + (centroid.x - center.x) * (1f - r) + panChange.x
+                                logicalOffsetY = logicalOffsetY * r + (centroid.y - center.y) * (1f - r) + panChange.y
+                                
+                                val (maxX, maxY) = getMaxOffsets(newVisualScale)
+                                scale = newVisualScale
+                                
+                                offsetX = logicalOffsetX.coerceIn(-maxX, maxX)
+                                offsetY = logicalOffsetY.coerceIn(-maxY, maxY)
+                                
+                                // Keep logical offsets in sync with clamped visual offsets for instant response when reversing
+                                logicalOffsetX = offsetX
+                                logicalOffsetY = offsetY
+
+                                // Consume if zoomed in or zooming
+                                if (newVisualScale > 1.05f || zoomChange != 1f || abs(panChange.y) > abs(panChange.x)) {
+                                    event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                }
+                            }
+                        }
+                        
+                        if (event.changes.size == 1) {
+                            val change = event.changes.first()
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
+                        } else {
+                            velocityTracker.resetTracking()
+                        }
+                    } while (event.changes.any { it.pressed })
+                    
+                    val (boundX, boundY) = getMaxOffsets(scale)
+                    val isOutOfBounds = scale < 1f || scale > 10f ||
+                            offsetX > boundX || offsetX < -boundX ||
+                            offsetY > boundY || offsetY < -boundY
+
+                    val rawVelocity = velocityTracker.calculateVelocity()
+                    val velocity = Offset(
+                        if (rawVelocity.x.isFinite()) rawVelocity.x else 0f,
+                        if (rawVelocity.y.isFinite()) rawVelocity.y else 0f
+                    )
+                    
+                    animationJob = scope.launch {
+                        if (isOutOfBounds) {
+                            val sS = scale
+                            val sX = offsetX
+                            val sY = offsetY
+                            val targetS = scale.coerceIn(1f, 10f)
+                            val (targetMaxX, targetMaxY) = getMaxOffsets(targetS)
+                            val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+                            val pivot = if (lastCentroid != Offset.Unspecified) lastCentroid else center
+                            val targetR = if (sS != 0f) targetS / sS else 1f
+                            val finalPivotX = sX * targetR + (pivot.x - center.x) * (1f - targetR)
+                            val finalPivotY = sY * targetR + (pivot.y - center.y) * (1f - targetR)
+                            val targetX = finalPivotX.coerceIn(-targetMaxX, targetMaxX)
+                            val targetY = finalPivotY.coerceIn(-targetMaxY, targetMaxY)
+
+                            AnimationState(0f).animateTo(
+                                1f,
+                                spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
+                            ) {
+                                val currentScale = sS + (targetS - sS) * value
+                                scale = currentScale
+                                val r = if (sS != 0f) currentScale / sS else 1f
+                                val pivotOffsetX = sX * r + (pivot.x - center.x) * (1f - r)
+                                val pivotOffsetY = sY * r + (pivot.y - center.y) * (1f - r)
+                                offsetX = (pivotOffsetX + (targetX - finalPivotX) * value).coerceIn(-targetMaxX, targetMaxX)
+                                offsetY = (pivotOffsetY + (targetY - finalPivotY) * value).coerceIn(-targetMaxY, targetMaxY)
+                            }
+                        } else if (scale > 1.05f) {
+                            val decay = splineBasedDecay<Offset>(density)
+                            var hitBoundary = false
+                            var velocityAtBoundary = Offset.Zero
+                            var positionAtBoundary = Offset.Zero
+                            
+                            AnimationState(
+                                typeConverter = Offset.VectorConverter,
+                                initialValue = Offset(offsetX, offsetY),
+                                initialVelocity = Offset(velocity.x, velocity.y)
+                            ).animateDecay(decay) {
+                                val (maxX, maxY) = getMaxOffsets(scale)
+                                if (value.x > maxX || value.x < -maxX || value.y > maxY || value.y < -maxY) {
+                                    val v = this.velocity
+                                    velocityAtBoundary = Offset(
+                                        if (v.x.isFinite()) v.x else 0f,
+                                        if (v.y.isFinite()) v.y else 0f
+                                    )
+                                    positionAtBoundary = value
+                                    hitBoundary = true
+                                    cancelAnimation()
+                                } else {
+                                    offsetX = value.x
+                                    offsetY = value.y
+                                }
+                            }
+                            
+                            if (hitBoundary) {
+                                val (maxX, maxY) = getMaxOffsets(scale)
+                                val targetX = positionAtBoundary.x.coerceIn(-maxX, maxX)
+                                val targetY = positionAtBoundary.y.coerceIn(-maxY, maxY)
+                                
+                                AnimationState(
+                                    typeConverter = Offset.VectorConverter,
+                                    initialValue = positionAtBoundary,
+                                    initialVelocity = velocityAtBoundary
+                                ).animateTo(
+                                    targetValue = Offset(targetX, targetY),
+                                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
+                                ) {
+                                    offsetX = value.x.coerceIn(-maxX, maxX)
+                                    offsetY = value.y.coerceIn(-maxY, maxY)
+                                }
+                            }
+                        }
+                    }
+                    velocityTracker.resetTracking()
                 }
             }
     ) {
@@ -645,15 +858,18 @@ fun ZoomableImageItem(
                 .size(coil3.size.Size.ORIGINAL)
                 .build(),
             contentDescription = stringResource(R.string.frame_label, frameNum),
-            onSuccess = { isLoaded = true },
+            onSuccess = { 
+                isLoaded = true 
+                imageSize = it.painter.intrinsicSize
+            },
             filterQuality = FilterQuality.High,
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer(
                     scaleX = scale,
                     scaleY = scale,
-                    translationX = offset.x,
-                    translationY = offset.y,
+                    translationX = offsetX,
+                    translationY = offsetY,
                     clip = true
                 ),
             contentScale = ContentScale.Fit,
