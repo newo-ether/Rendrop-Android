@@ -53,6 +53,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
@@ -262,7 +263,13 @@ fun ProjectDetailScreen(
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
         ) {
-            val frameNum = selectedFrameNum ?: return@AnimatedVisibility
+            // Keep the last frame num for the duration of the exit animation
+            var lastFrameNum by remember { mutableStateOf<Int?>(null) }
+            LaunchedEffect(selectedFrameNum) {
+                if (selectedFrameNum != null) lastFrameNum = selectedFrameNum
+            }
+
+            val frameNum = lastFrameNum ?: return@AnimatedVisibility
             val initialIndex = remember(frameNum) { viewerFrameNumbers.indexOf(frameNum) }
             
             // Set status bar icons to light when viewer is active
@@ -529,7 +536,8 @@ fun FullScreenImageViewer(
                 project = project,
                 frameNum = frameNum,
                 isPagerScrolling = pagerState.isScrollInProgress,
-                onScaleChanged = { if (page == pagerState.currentPage) currentScale = it }
+                onScaleChanged = { if (page == pagerState.currentPage) currentScale = it },
+                onDismiss = onDismiss
             )
         }
         Box(
@@ -581,7 +589,8 @@ fun ZoomableImageItem(
     project: ProjectInfo,
     frameNum: Int,
     isPagerScrolling: Boolean,
-    onScaleChanged: (Float) -> Unit
+    onScaleChanged: (Float) -> Unit,
+    onDismiss: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -604,7 +613,7 @@ fun ZoomableImageItem(
     }
 
     fun getMaxOffsets(currentScale: Float): Pair<Float, Float> {
-        if (imageSize.width <= 0f || imageSize.height <= 0f || containerSize.width <= 0f || containerSize.height <= 0f) return 0f to 0f
+        if (imageSize == Size.Zero || containerSize == Size.Zero) return 0f to 0f
         val imageAspectRatio = imageSize.width / imageSize.height
         val containerAspectRatio = containerSize.width / containerSize.height
         
@@ -613,13 +622,13 @@ fun ZoomableImageItem(
         
         val maxX = (contentWidth * currentScale - containerSize.width).coerceAtLeast(0f) / 2f
         val maxY = (contentHeight * currentScale - containerSize.height).coerceAtLeast(0f) / 2f
-        
-        return if (maxX.isFinite() && maxY.isFinite()) maxX to maxY else 0f to 0f
+        return maxX to maxY
     }
 
+    // Helper for rubber-band resistance
     fun rubberBandValue(fullDelta: Float, dimension: Float): Float {
         if (dimension <= 0f) return 0f
-        val c = 0.75f
+        val c = 0.45f
         return (fullDelta * c * dimension) / (dimension + c * fullDelta)
     }
 
@@ -640,30 +649,38 @@ fun ZoomableImageItem(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { containerSize = Size(it.width.toFloat(), it.height.toFloat()) }
-            .pointerInput(isLoaded, frameNum) {
-                if (!isLoaded) return@pointerInput
+            .pointerInput(frameNum) {
                 detectTapGestures(
+                    onTap = {
+                        if (scale <= 1.05f) onDismiss()
+                    },
                     onDoubleTap = { tapOffset ->
                         animationJob?.cancel()
                         animationJob = scope.launch {
                             val startScale = scale
                             val startOffsetX = offsetX
                             val startOffsetY = offsetY
-                            
+
                             if (startScale > 1.05f) {
                                 // Zoom Out to 1x
                                 val targetScale = 1f
                                 val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
-                                
+
                                 AnimationState(startScale).animateTo(
                                     targetScale,
-                                    spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
+                                    spring(
+                                        stiffness = Spring.StiffnessMediumLow,
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        visibilityThreshold = 0.001f
+                                    )
                                 ) {
                                     scale = value
+                                    // Pivot zoom out: shrink towards the tapped point
                                     val r = if (startScale != 0f) value / startScale else 1f
                                     val unconstrainedX = startOffsetX * r + (tapOffset.x - center.x) * (1f - r)
                                     val unconstrainedY = startOffsetY * r + (tapOffset.y - center.y) * (1f - r)
-                                    
+
+                                    // Clamp to valid boundaries for the CURRENT scale
                                     val (maxX, maxY) = getMaxOffsets(value)
                                     offsetX = unconstrainedX.coerceIn(-maxX, maxX)
                                     offsetY = unconstrainedY.coerceIn(-maxY, maxY)
@@ -672,184 +689,30 @@ fun ZoomableImageItem(
                                 // Zoom In to 3x
                                 val targetScale = 3f
                                 val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
-                                
+
                                 AnimationState(startScale).animateTo(
                                     targetScale,
-                                    spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
+                                    spring(
+                                        stiffness = Spring.StiffnessMediumLow,
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        visibilityThreshold = 0.001f
+                                    )
                                 ) {
                                     scale = value
                                     val r = if (startScale != 0f) value / startScale else 1f
-                                    offsetX = startOffsetX * r + (tapOffset.x - center.x) * (1f - r)
-                                    offsetY = startOffsetY * r + (tapOffset.y - center.y) * (1f - r)
+
+                                    // Pivot zoom: maintain the tapped point visually stationary
+                                    val unconstrainedX = startOffsetX * r + (tapOffset.x - center.x) * (1f - r)
+                                    val unconstrainedY = startOffsetY * r + (tapOffset.y - center.y) * (1f - r)
+                                    // Clamp to valid boundaries for the CURRENT scale
+                                    val (maxX, maxY) = getMaxOffsets(value)
+                                    offsetX = unconstrainedX.coerceIn(-maxX, maxX)
+                                    offsetY = unconstrainedY.coerceIn(-maxY, maxY)
                                 }
                             }
                         }
                     }
                 )
-            }
-            .pointerInput(isLoaded, frameNum) {
-                if (!isLoaded) return@pointerInput
-                val velocityTracker = VelocityTracker()
-
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    animationJob?.cancel()
-
-                    var pastTouchSlop = false
-                    val touchSlop = viewConfiguration.touchSlop
-                    lastCentroid = Offset.Unspecified
-
-                    var logicalScale = scale
-                    var logicalOffsetX = offsetX
-                    var logicalOffsetY = offsetY
-                    
-                    do {
-                        val event = awaitPointerEvent()
-                        val zoomChange = event.calculateZoom()
-                        val panChange = event.calculatePan()
-
-                        if (!pastTouchSlop) {
-                            val panAmount = panChange.getDistance()
-                            if (zoomChange != 1f || panAmount > touchSlop) {
-                                pastTouchSlop = true
-                            }
-                        }
-                        
-                        if (pastTouchSlop) {
-                            val centroid = event.calculateCentroid(useCurrent = false)
-                            if (zoomChange != 1f && centroid != Offset.Unspecified) {
-                                lastCentroid = centroid
-                            }
-                            
-                            if (zoomChange != 1f || panChange != Offset.Zero) {
-                                val oldVisualScale = scale
-                                logicalScale = (logicalScale * zoomChange).coerceIn(0.1f, 30f)
-                                
-                                val newVisualScale = if (logicalScale < 1f) {
-                                    1f - rubberBandValue(1f - logicalScale, 1f)
-                                } else if (logicalScale > 10f) {
-                                    10f + rubberBandValue(logicalScale - 10f, 5f)
-                                } else {
-                                    logicalScale
-                                }
-                                
-                                val r = if (oldVisualScale != 0f) newVisualScale / oldVisualScale else 1f
-                                val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
-
-                                logicalOffsetX = logicalOffsetX * r + (centroid.x - center.x) * (1f - r) + panChange.x
-                                logicalOffsetY = logicalOffsetY * r + (centroid.y - center.y) * (1f - r) + panChange.y
-                                
-                                val (maxX, maxY) = getMaxOffsets(newVisualScale)
-                                scale = newVisualScale
-                                
-                                offsetX = logicalOffsetX.coerceIn(-maxX, maxX)
-                                offsetY = logicalOffsetY.coerceIn(-maxY, maxY)
-                                
-                                // Keep logical offsets in sync with clamped visual offsets for instant response when reversing
-                                logicalOffsetX = offsetX
-                                logicalOffsetY = offsetY
-
-                                // Consume if zoomed in or zooming
-                                if (newVisualScale > 1.05f || zoomChange != 1f || abs(panChange.y) > abs(panChange.x)) {
-                                    event.changes.forEach { if (it.positionChanged()) it.consume() }
-                                }
-                            }
-                        }
-                        
-                        if (event.changes.size == 1) {
-                            val change = event.changes.first()
-                            velocityTracker.addPosition(change.uptimeMillis, change.position)
-                        } else {
-                            velocityTracker.resetTracking()
-                        }
-                    } while (event.changes.any { it.pressed })
-                    
-                    val (boundX, boundY) = getMaxOffsets(scale)
-                    val isOutOfBounds = scale < 1f || scale > 10f ||
-                            offsetX > boundX || offsetX < -boundX ||
-                            offsetY > boundY || offsetY < -boundY
-
-                    val rawVelocity = velocityTracker.calculateVelocity()
-                    val velocity = Offset(
-                        if (rawVelocity.x.isFinite()) rawVelocity.x else 0f,
-                        if (rawVelocity.y.isFinite()) rawVelocity.y else 0f
-                    )
-                    
-                    animationJob = scope.launch {
-                        if (isOutOfBounds) {
-                            val sS = scale
-                            val sX = offsetX
-                            val sY = offsetY
-                            val targetS = scale.coerceIn(1f, 10f)
-                            val (targetMaxX, targetMaxY) = getMaxOffsets(targetS)
-                            val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
-                            val pivot = if (lastCentroid != Offset.Unspecified) lastCentroid else center
-                            val targetR = if (sS != 0f) targetS / sS else 1f
-                            val finalPivotX = sX * targetR + (pivot.x - center.x) * (1f - targetR)
-                            val finalPivotY = sY * targetR + (pivot.y - center.y) * (1f - targetR)
-                            val targetX = finalPivotX.coerceIn(-targetMaxX, targetMaxX)
-                            val targetY = finalPivotY.coerceIn(-targetMaxY, targetMaxY)
-
-                            AnimationState(0f).animateTo(
-                                1f,
-                                spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
-                            ) {
-                                val currentScale = sS + (targetS - sS) * value
-                                scale = currentScale
-                                val r = if (sS != 0f) currentScale / sS else 1f
-                                val pivotOffsetX = sX * r + (pivot.x - center.x) * (1f - r)
-                                val pivotOffsetY = sY * r + (pivot.y - center.y) * (1f - r)
-                                offsetX = (pivotOffsetX + (targetX - finalPivotX) * value).coerceIn(-targetMaxX, targetMaxX)
-                                offsetY = (pivotOffsetY + (targetY - finalPivotY) * value).coerceIn(-targetMaxY, targetMaxY)
-                            }
-                        } else if (scale > 1.05f) {
-                            val decay = splineBasedDecay<Offset>(density)
-                            var hitBoundary = false
-                            var velocityAtBoundary = Offset.Zero
-                            var positionAtBoundary = Offset.Zero
-                            
-                            AnimationState(
-                                typeConverter = Offset.VectorConverter,
-                                initialValue = Offset(offsetX, offsetY),
-                                initialVelocity = Offset(velocity.x, velocity.y)
-                            ).animateDecay(decay) {
-                                val (maxX, maxY) = getMaxOffsets(scale)
-                                if (value.x > maxX || value.x < -maxX || value.y > maxY || value.y < -maxY) {
-                                    val v = this.velocity
-                                    velocityAtBoundary = Offset(
-                                        if (v.x.isFinite()) v.x else 0f,
-                                        if (v.y.isFinite()) v.y else 0f
-                                    )
-                                    positionAtBoundary = value
-                                    hitBoundary = true
-                                    cancelAnimation()
-                                } else {
-                                    offsetX = value.x
-                                    offsetY = value.y
-                                }
-                            }
-                            
-                            if (hitBoundary) {
-                                val (maxX, maxY) = getMaxOffsets(scale)
-                                val targetX = positionAtBoundary.x.coerceIn(-maxX, maxX)
-                                val targetY = positionAtBoundary.y.coerceIn(-maxY, maxY)
-                                
-                                AnimationState(
-                                    typeConverter = Offset.VectorConverter,
-                                    initialValue = positionAtBoundary,
-                                    initialVelocity = velocityAtBoundary
-                                ).animateTo(
-                                    targetValue = Offset(targetX, targetY),
-                                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy)
-                                ) {
-                                    offsetX = value.x.coerceIn(-maxX, maxX)
-                                    offsetY = value.y.coerceIn(-maxY, maxY)
-                                }
-                            }
-                        }
-                    }
-                    velocityTracker.resetTracking()
-                }
             }
     ) {
         SubcomposeAsyncImage(
@@ -865,12 +728,191 @@ fun ZoomableImageItem(
             filterQuality = FilterQuality.High,
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(frameNum) {
+                    val velocityTracker = VelocityTracker()
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        animationJob?.cancel()
+                        var pastTouchSlop = false
+                        val touchSlop = viewConfiguration.touchSlop
+                        // Reset centroid for new gesture
+                        lastCentroid = Offset.Unspecified
+                        // Maintain logical state for the duration of this gesture
+                        var logicalScale = scale
+                        var logicalOffsetX = offsetX
+                        var logicalOffsetY = offsetY
+                        do {
+                            val event = awaitPointerEvent()
+                            val zoomChange = event.calculateZoom()
+                            val panChange = event.calculatePan()
+                            if (!pastTouchSlop) {
+                                val panAmount = panChange.getDistance()
+                                if (zoomChange != 1f || panAmount > touchSlop) {
+                                    pastTouchSlop = true
+                                }
+                            }
+                            if (pastTouchSlop) {
+                                val centroid = event.calculateCentroid(useCurrent = false)
+                                if (zoomChange != 1f && centroid != Offset.Unspecified) {
+                                    lastCentroid = centroid
+                                }
+                                if (zoomChange != 1f || panChange != Offset.Zero) {
+                                    val oldVisualScale = scale
+                                    // 1. Update logical scale and map to visual scale
+                                    logicalScale = (logicalScale * zoomChange).coerceIn(0.1f, 30f)
+                                    val newVisualScale = if (logicalScale < 1f) {
+                                        1f - rubberBandValue(1f - logicalScale, 1f)
+                                    } else if (logicalScale > 10f) {
+                                        10f + rubberBandValue(logicalScale - 10f, 5f)
+                                    } else {
+                                        logicalScale
+                                    }
+                                    // 2. Use the visual scale ratio to transform offsets (keeps centroid stable)
+                                    val r = if (oldVisualScale != 0f) newVisualScale / oldVisualScale else 1f
+                                    val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+                                    // Update logical offsets (used for rubber-band calculation)
+                                    logicalOffsetX = logicalOffsetX * r + (centroid.x - center.x) * (1f - r) + panChange.x
+                                    logicalOffsetY = logicalOffsetY * r + (centroid.y - center.y) * (1f - r) + panChange.y
+                                    val (maxX, maxY) = getMaxOffsets(newVisualScale)
+                                    scale = newVisualScale
+                                    offsetX = if (logicalOffsetX > maxX) maxX + rubberBandValue(logicalOffsetX - maxX, containerSize.width)
+                                    else if (logicalOffsetX < -maxX) -maxX - rubberBandValue(-maxX - logicalOffsetX, containerSize.width)
+                                    else logicalOffsetX
+                                    offsetY = if (logicalOffsetY > maxY) maxY + rubberBandValue(logicalOffsetY - maxY, containerSize.height)
+                                    else if (logicalOffsetY < -maxY) -maxY - rubberBandValue(-maxY - logicalOffsetY, containerSize.height)
+                                    else logicalOffsetY
+                                    
+                                    // Consume if zoomed in or zooming to prevent pager from scrolling
+                                    if (newVisualScale > 1.05f || zoomChange != 1f || abs(panChange.y) > abs(panChange.x)) {
+                                        event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                    }
+                                }
+                            }
+                            if (event.changes.size == 1) {
+                                val change = event.changes.first()
+                                velocityTracker.addPosition(change.uptimeMillis, change.position)
+                            } else {
+                                velocityTracker.resetTracking()
+                            }
+                        } while (event.changes.any { it.pressed })
+                        // Release handler: Snap-back or Fling
+                        val rawVelocity = velocityTracker.calculateVelocity()
+                        val maxV = with(density) { 2500.dp.toPx() }
+                        val velocity = Velocity(
+                            x = if (rawVelocity.x.isNaN()) 0f else rawVelocity.x.coerceIn(-maxV, maxV),
+                            y = if (rawVelocity.y.isNaN()) 0f else rawVelocity.y.coerceIn(-maxV, maxV)
+                        )
+
+                        animationJob = scope.launch {
+                            val rbCoeff = 0.45f
+                            if (scale < 0.95f || scale > 10.05f) {
+                                val sS = scale
+                                val sX = offsetX
+                                val sY = offsetY
+                                val targetS = scale.coerceIn(1f, 10f)
+                                val (targetMaxX, targetMaxY) = getMaxOffsets(targetS)
+                                val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+                                val pivot = if (lastCentroid != Offset.Unspecified) lastCentroid else center
+                                val targetR = if (sS != 0f) targetS / sS else 1f
+                                val finalPivotX = sX * targetR + (pivot.x - center.x) * (1f - targetR)
+                                val finalPivotY = sY * targetR + (pivot.y - center.y) * (1f - targetR)
+                                val targetX = finalPivotX.coerceIn(-targetMaxX, targetMaxX)
+                                val targetY = finalPivotY.coerceIn(-targetMaxY, targetMaxY)
+                                AnimationState(0f).animateTo(
+                                    1f,
+                                    spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy)
+                                ) {
+                                    val currentScale = sS + (targetS - sS) * value
+                                    scale = currentScale
+                                    val r = if (sS != 0f) currentScale / sS else 1f
+                                    val pivotOffsetX = sX * r + (pivot.x - center.x) * (1f - r)
+                                    val pivotOffsetY = sY * r + (pivot.y - center.y) * (1f - r)
+                                    offsetX = pivotOffsetX + (targetX - finalPivotX) * value
+                                    offsetY = pivotOffsetY + (targetY - finalPivotY) * value
+                                }
+                            } else {
+                                // Handle axes independently
+                                launch {
+                                    val (maxX, _) = getMaxOffsets(scale)
+                                    if (offsetX > maxX || offsetX < -maxX) {
+                                        val targetX = offsetX.coerceIn(-maxX, maxX)
+                                        // Use damped velocity for visual snap-back to avoid "kick"
+                                        AnimationState(initialValue = offsetX, initialVelocity = velocity.x * rbCoeff)
+                                            .animateTo(targetX, spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy)) {
+                                                offsetX = value
+                                            }
+                                    } else if (velocity.x != 0f) {
+                                        val decay = splineBasedDecay<Float>(density)
+                                        var hitX = false
+                                        var velX = 0f
+                                        var posX = 0f
+                                        AnimationState(initialValue = offsetX, initialVelocity = velocity.x)
+                                            .animateDecay(decay) {
+                                                val (curMaxX, _) = getMaxOffsets(scale)
+                                                if (value > curMaxX || value < -curMaxX) {
+                                                    velX = this.velocity
+                                                    posX = value
+                                                    hitX = true
+                                                    cancelAnimation()
+                                                } else {
+                                                    offsetX = value
+                                                }
+                                            }
+                                        if (hitX) {
+                                            val (curMaxX, _) = getMaxOffsets(scale)
+                                            val finalTargetX = posX.coerceIn(-curMaxX, curMaxX)
+                                            AnimationState(initialValue = posX, initialVelocity = velX * rbCoeff)
+                                                .animateTo(finalTargetX, spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy)) {
+                                                    offsetX = value
+                                                }
+                                        }
+                                    }
+                                }
+                                launch {
+                                    val (_, maxY) = getMaxOffsets(scale)
+                                    if (offsetY > maxY || offsetY < -maxY) {
+                                        val targetY = offsetY.coerceIn(-maxY, maxY)
+                                        AnimationState(initialValue = offsetY, initialVelocity = velocity.y * rbCoeff)
+                                            .animateTo(targetY, spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy)) {
+                                                offsetY = value
+                                            }
+                                    } else if (velocity.y != 0f) {
+                                        val decay = splineBasedDecay<Float>(density)
+                                        var hitY = false
+                                        var velY = 0f
+                                        var posY = 0f
+                                        AnimationState(initialValue = offsetY, initialVelocity = velocity.y)
+                                            .animateDecay(decay) {
+                                                val (_, curMaxY) = getMaxOffsets(scale)
+                                                if (value > curMaxY || value < -curMaxY) {
+                                                    velY = this.velocity
+                                                    posY = value
+                                                    hitY = true
+                                                    cancelAnimation()
+                                                } else {
+                                                    offsetY = value
+                                                }
+                                            }
+                                        if (hitY) {
+                                            val (_, curMaxY) = getMaxOffsets(scale)
+                                            val finalTargetY = posY.coerceIn(-curMaxY, curMaxY)
+                                            AnimationState(initialValue = posY, initialVelocity = velY * rbCoeff)
+                                                .animateTo(finalTargetY, spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy)) {
+                                                    offsetY = value
+                                                }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        velocityTracker.resetTracking()
+                    }
+                }
                 .graphicsLayer(
                     scaleX = scale,
                     scaleY = scale,
                     translationX = offsetX,
-                    translationY = offsetY,
-                    clip = true
+                    translationY = offsetY
                 ),
             contentScale = ContentScale.Fit,
             loading = {
