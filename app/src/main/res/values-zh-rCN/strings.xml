@@ -63,4 +63,11 @@
     <string name="monitor_service_channel_name">Rendrop 监视器</string>
     <string name="monitor_service_title">Rendrop 监视器已激活</string>
     <string name="monitor_service_text">正在扫描项目更新…</string>
+    <string name="project_network_error">无法连接 %1$s：%2$s</string>
+    <string name="project_http_error">%1$s 返回 HTTP %2$d</string>
+    <string name="project_protocol_error">%1$s 返回了无效响应：%2$s</string>
+    <string name="project_unknown_error">无法刷新 %1$s：%2$s</string>
+    <string name="project_error_no_detail">无详细信息</string>
+    <string name="error_frame_downloads">帧下载失败：%1$d / %2$d</string>
+    <string name="error_prepare_frames">无法准备已下载的帧序列</string>
 </resources>

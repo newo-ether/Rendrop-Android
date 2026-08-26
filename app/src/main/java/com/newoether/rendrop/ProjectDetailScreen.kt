@@ -61,11 +61,8 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.work.*
 import coil3.compose.SubcomposeAsyncImage
 import coil3.request.ImageRequest
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,18 +70,20 @@ import kotlin.math.abs
 fun ProjectDetailScreen(
     initialProject: ProjectInfo,
     onBack: () -> Unit,
-    onProjectUpdate: (ProjectInfo) -> Unit = {}
 ) {
-    var project by remember { mutableStateOf(initialProject) }
     var isGridView by rememberSaveable { mutableStateOf(true) }
     var isAscending by rememberSaveable { mutableStateOf(false) }
     var sortVersion by rememberSaveable { mutableIntStateOf(0) }
-    var refreshing by remember { mutableStateOf(false) }
     var selectedFrameNum by remember { mutableStateOf<Int?>(null) }
     var showVideoDialog by remember { mutableStateOf(false) }
     
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val repository = context.projectRepository
+    val repositoryState by repository.state.collectAsState()
+    val project = repositoryState.projects.firstOrNull {
+        it.deviceIp == initialProject.deviceIp && it.id == initialProject.id
+    } ?: initialProject
     val workManager = WorkManager.getInstance(context)
     
     // Track video generation work
@@ -108,32 +107,7 @@ fun ProjectDetailScreen(
 
     fun refreshProject() {
         scope.launch {
-            refreshing = true
-            try {
-                val updated = withContext(Dispatchers.IO) {
-                    fetchProjectDetail(project.deviceIp, project.id)
-                }
-                if (updated != null) {
-                    project = updated
-                    onProjectUpdate(updated)
-                }
-                delay(200)
-            } finally {
-                refreshing = false
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(3000)
-            val updated = withContext(Dispatchers.IO) {
-                fetchProjectDetail(project.deviceIp, project.id)
-            }
-            if (updated != null) {
-                project = updated
-                onProjectUpdate(updated)
-            }
+            repository.refresh()
         }
     }
 
@@ -199,7 +173,7 @@ fun ProjectDetailScreen(
             }
         ) { innerPadding ->
             PullToRefreshBox(
-                isRefreshing = refreshing,
+                isRefreshing = repositoryState.isRefreshing,
                 onRefresh = { refreshProject() },
                 state = rememberPullToRefreshState(),
                 modifier = Modifier.padding(innerPadding).fillMaxSize()
@@ -322,18 +296,23 @@ fun ProjectDetailScreen(
                 notificationManager.notify(videoNotificationId, notification)
 
                 val inputData = workDataOf(
-                    "projectName" to project.name,
-                    "deviceIp" to project.deviceIp,
-                    "projectId" to project.id,
-                    "frameNumbers" to (1..project.finishedFrame).map { n ->
-                        project.frameStart + (n - 1) * project.frameStep
-                    }.toIntArray(),
-                    "quality" to quality,
-                    "fps" to fps
+                    VideoWorkInput.PROJECT_NAME to project.name,
+                    VideoWorkInput.DEVICE_IP to project.deviceIp,
+                    VideoWorkInput.PROJECT_ID to project.id,
+                    VideoWorkInput.FRAME_START to project.frameStart,
+                    VideoWorkInput.FRAME_COUNT to project.finishedFrame,
+                    VideoWorkInput.FRAME_STEP to project.frameStep,
+                    VideoWorkInput.QUALITY to quality,
+                    VideoWorkInput.FPS to fps,
                 )
                 
+                val constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
                 val workRequest = OneTimeWorkRequestBuilder<VideoGeneratorWorker>()
                     .setInputData(inputData)
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
                     .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
                 
@@ -346,6 +325,9 @@ fun ProjectDetailScreen(
         )
     }
 
+    BackHandler(enabled = selectedFrameNum != null) {
+        selectedFrameNum = null
+    }
     BackHandler(enabled = selectedFrameNum == null) {
         onBack()
     }
@@ -510,9 +492,6 @@ fun FullScreenImageViewer(
 ) {
     val pagerState = rememberPagerState(initialPage = initialIndex) { frameNumbers.size }
     
-    BackHandler {
-        onDismiss()
-    }
 
     Box(
         modifier = Modifier

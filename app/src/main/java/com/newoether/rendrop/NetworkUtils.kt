@@ -8,10 +8,21 @@ import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -24,9 +35,28 @@ private val client = OkHttpClient.Builder()
     .readTimeout(5, TimeUnit.SECONDS)
     .build()
 
+private val rendropJson = Json {
+    ignoreUnknownKeys = true
+}
+object ProjectIdSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ProjectId", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): String {
+        if (decoder !is JsonDecoder) return decoder.decodeString()
+        val value = decoder.decodeJsonElement().jsonPrimitive
+        if (!value.isString && value.longOrNull == null) {
+            throw SerializationException("Project ID must be a UUID string or legacy integer")
+        }
+        return value.content
+    }
+    override fun serialize(encoder: Encoder, value: String) {
+        encoder.encodeString(value)
+    }
+}
 @Serializable
 data class ProjectInfo(
-    val id: Int,
+    @Serializable(with = ProjectIdSerializer::class)
+    val id: String,
     val name: String,
     val path: String,
     val outputPath: String,
@@ -41,6 +71,23 @@ data class ProjectInfo(
     val finishedFrame: Int,
     val totalFrame: Int,
     val deviceIp: String = "",
+)
+
+sealed interface RendropError {
+    data class Network(val detail: String?) : RendropError
+    data class Http(val statusCode: Int) : RendropError
+    data class Protocol(val detail: String?) : RendropError
+    data class Unexpected(val detail: String?) : RendropError
+}
+
+sealed interface RendropApiResult<out T> {
+    data class Success<T>(val value: T) : RendropApiResult<T>
+    data class Failure(val error: RendropError) : RendropApiResult<Nothing>
+}
+
+data class ProjectRefreshBatch(
+    val projectsByDevice: Map<String, List<ProjectInfo>>,
+    val errors: Map<String, RendropError>,
 )
 
 fun isValidIp(ip: String): Boolean {
@@ -150,38 +197,40 @@ suspend fun scanLanDevices(context: Context): List<Pair<String, String>> = corou
     results
 }
 
-fun fetchProjectsFromDevice(ip: String): List<ProjectInfo> {
+fun fetchProjectsFromDevice(ip: String): RendropApiResult<List<ProjectInfo>> {
     return try {
-        val req = Request.Builder()
+        val request = Request.Builder()
             .url("http://$ip:28528/projects")
             .build()
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return emptyList()
-            val body = resp.body.string()
-            Json.decodeFromString<List<ProjectInfo>>(body).map { it.copy(deviceIp = ip) }
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                return RendropApiResult.Failure(RendropError.Http(response.code))
+            }
+            val projects = rendropJson.decodeFromString<List<ProjectInfo>>(response.body.string())
+                .map { it.copy(deviceIp = ip) }
+            RendropApiResult.Success(projects)
         }
-    } catch (_: Exception) {
-        emptyList()
+    } catch (error: SerializationException) {
+        RendropApiResult.Failure(RendropError.Protocol(error.message))
+    } catch (error: IOException) {
+        RendropApiResult.Failure(RendropError.Network(error.message))
+    } catch (error: Exception) {
+        RendropApiResult.Failure(RendropError.Unexpected(error.message))
     }
 }
 
-fun fetchProjectDetail(ip: String, id: Int): ProjectInfo? {
-    return try {
-        val req = Request.Builder()
-            .url("http://$ip:28528/projects/$id")
-            .build()
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return null
-            val body = resp.body.string()
-            Json.decodeFromString<ProjectInfo>(body).copy(deviceIp = ip)
-        }
-    } catch (_: Exception) {
-        null
-    }
-}
+suspend fun fetchAllProjects(devices: List<String>): ProjectRefreshBatch = coroutineScope {
+    val results = devices.distinct().map { ip ->
+        async(Dispatchers.IO) { ip to fetchProjectsFromDevice(ip) }
+    }.awaitAll()
 
-suspend fun fetchAllProjects(devices: List<String>): List<ProjectInfo> = coroutineScope {
-    devices.map { ip ->
-        async(Dispatchers.IO) { fetchProjectsFromDevice(ip) }
-    }.awaitAll().flatten()
+    val projectsByDevice = linkedMapOf<String, List<ProjectInfo>>()
+    val errors = linkedMapOf<String, RendropError>()
+    results.forEach { (ip, result) ->
+        when (result) {
+            is RendropApiResult.Success -> projectsByDevice[ip] = result.value
+            is RendropApiResult.Failure -> errors[ip] = result.error
+        }
+    }
+    ProjectRefreshBatch(projectsByDevice, errors)
 }

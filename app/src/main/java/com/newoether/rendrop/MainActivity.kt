@@ -9,17 +9,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
-import androidx.work.WorkManager
-import coil3.SingletonImageLoader
+import androidx.lifecycle.lifecycleScope
 import com.newoether.rendrop.ui.theme.RendropTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    companion object {
-        lateinit var instance: MainActivity
-            private set
-    }
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -31,16 +26,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        instance = this
         enableEdgeToEdge()
 
         requestNotificationPermission()
         requestStoragePermission()
         
-        // Ensure a clean state on restart
-        clearImageCache()
-        cancelOngoingWork()
-
         // Start background monitor if we already have permission
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || 
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
@@ -54,22 +44,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        lifecycleScope.launch {
+            projectRepository.refreshOnOpen()
+        }
+    }
+
     private fun startMonitorService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(Intent(this, ProjectMonitorService::class.java))
         } else {
             startService(Intent(this, ProjectMonitorService::class.java))
         }
-    }
-
-    private fun clearImageCache() {
-        val imageLoader = SingletonImageLoader.get(this)
-        imageLoader.diskCache?.clear()
-        imageLoader.memoryCache?.clear()
-    }
-
-    private fun cancelOngoingWork() {
-        WorkManager.getInstance(this).cancelAllWorkByTag(VideoGeneratorWorker::class.java.name)
     }
 
     private fun requestNotificationPermission() {

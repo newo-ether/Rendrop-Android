@@ -37,55 +37,13 @@ import kotlin.math.*
 fun MainScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val repository = context.projectRepository
+    val repositoryState by repository.state.collectAsState()
+    val projects = repositoryState.projects
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-    var selectedProject by remember { mutableStateOf<ProjectInfo?>(null) }
-
-    val projects = rememberSaveable(saver = listSaver(save = { list ->
-        list.map { p ->
-            listOf(
-                p.id,
-                p.name,
-                p.path,
-                p.outputPath,
-                p.state,
-                p.frameStart,
-                p.frameEnd,
-                p.frameStep,
-                p.resolutionX,
-                p.resolutionY,
-                p.resolutionScale,
-                p.renderEngine,
-                p.finishedFrame,
-                p.totalFrame,
-                p.deviceIp
-            )
-        }
-    }, restore = { saved ->
-        saved.map { s ->
-            val l = s as List<Any>
-            ProjectInfo(
-                id = l[0] as Int,
-                name = l[1] as String,
-                path = l[2] as String,
-                outputPath = l[3] as String,
-                state = l[4] as String,
-                frameStart = l[5] as Int,
-                frameEnd = l[6] as Int,
-                frameStep = l[7] as Int,
-                resolutionX = l[8] as Int,
-                resolutionY = l[9] as Int,
-                resolutionScale = l[10] as Int,
-                renderEngine = l[11] as String,
-                finishedFrame = l[12] as Int,
-                totalFrame = l[13] as Int,
-                deviceIp = if (l.size > 14) l[14] as String else ""
-            )
-        }.toMutableStateList()
-    })) { mutableStateListOf<ProjectInfo>() }
+    var selectedProjectKey by remember { mutableStateOf<ProjectKey?>(null) }
 
     var devices by remember { mutableStateOf(listOf<Pair<String, String>>()) }
-    var projectRefreshing by rememberSaveable { mutableStateOf(false) }
-    var deviceRefreshing by rememberSaveable { mutableStateOf(false) }
 
     var showScanDeviceDialog by rememberSaveable { mutableStateOf(false) }
     var showAddDeviceDialog by rememberSaveable { mutableStateOf(false) }
@@ -115,26 +73,32 @@ fun MainScreen() {
         }
     }
 
+    LaunchedEffect(projects, selectedProjectKey) {
+        val key = selectedProjectKey ?: return@LaunchedEffect
+        if (projects.none { it.deviceIp == key.deviceIp && it.id == key.id }) {
+            selectedProjectKey = null
+        }
+    }
+
     AnimatedContent(
-        targetState = selectedProject, transitionSpec = {
+        targetState = selectedProjectKey, transitionSpec = {
             if (targetState != null) {
                 (slideInHorizontally { it } + fadeIn()).togetherWith(slideOutHorizontally { -it } + fadeOut())
             } else {
                 (slideInHorizontally { -it } + fadeIn()).togetherWith(slideOutHorizontally { it } + fadeOut())
             }
         }, label = "Navigation"
-    ) { projectInfo ->
-        if (projectInfo != null) {
-            ProjectDetailScreen(
-                initialProject = projectInfo,
-                onBack = { selectedProject = null },
-                onProjectUpdate = { updated ->
-                    val index =
-                        projects.indexOfFirst { it.id == updated.id && it.deviceIp == updated.deviceIp }
-                    if (index != -1) {
-                        projects[index] = updated
-                    }
-                })
+    ) { projectKey ->
+        if (projectKey != null) {
+            val projectInfo = projects.firstOrNull {
+                it.deviceIp == projectKey.deviceIp && it.id == projectKey.id
+            }
+            if (projectInfo != null) {
+                ProjectDetailScreen(
+                    initialProject = projectInfo,
+                    onBack = { selectedProjectKey = null },
+                )
+            }
         } else {
                         Scaffold(topBar = {
                             Crossfade(targetState = selectedTab) {
@@ -172,22 +136,15 @@ fun MainScreen() {
                     when (screen) {
                         0 -> ProjectList(
                             devices = devices,
-                            projects = projects,
-                            onProjectsChange = {
-                                projects.clear()
-                                projects.addAll(it)
-                            },
-                            refreshing = projectRefreshing,
-                            onRefreshingChange = { projectRefreshing = it },
-                            onProjectClick = { selectedProject = it })
+                            state = repositoryState,
+                            onRefresh = { scope.launch { repository.refresh() } },
+                            onProjectClick = {
+                                selectedProjectKey = ProjectKey(it.deviceIp, it.id)
+                            })
 
                         1 -> DeviceList(
                             devices = devices,
                             onDevicesChange = { updateDevices(it) },
-                            projects = projects,
-                            onProjectsChange = { projects.clear(); projects.addAll(it) },
-                            refreshing = deviceRefreshing,
-                            onRefreshingChange = { deviceRefreshing = it },
                             onEditDevice = { ip, name ->
                                 originalDeviceIp = ip
                                 editingDeviceIp = ip
@@ -235,7 +192,6 @@ fun MainScreen() {
                     device = deletingDevice,
                     onConfirm = { device ->
                         updateDevices(devices.filter { it.first != device.first })
-                        projects.removeIf { it.deviceIp == device.first }
                     })
             }
         }
@@ -794,10 +750,6 @@ fun EditDeviceDialog(
 fun DeviceList(
     devices: List<Pair<String, String>>,
     onDevicesChange: (List<Pair<String, String>>) -> Unit,
-    projects: List<ProjectInfo>,
-    onProjectsChange: (List<ProjectInfo>) -> Unit,
-    refreshing: Boolean,
-    onRefreshingChange: (Boolean) -> Unit,
     onEditDevice: (String, String) -> Unit,
     onDeleteDevice: (Pair<String, String>) -> Unit
 ) {
@@ -895,54 +847,16 @@ fun DeviceList(
 @Composable
 fun ProjectList(
     devices: List<Pair<String, String>>,
-    projects: List<ProjectInfo>,
-    onProjectsChange: (List<ProjectInfo>) -> Unit,
-    refreshing: Boolean,
-    onRefreshingChange: (Boolean) -> Unit,
+    state: ProjectRepositoryState,
+    onRefresh: () -> Unit,
     onProjectClick: (ProjectInfo) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
-
-    fun loadProjects(showLoading: Boolean = true) {
-        scope.launch {
-            val startTime = System.currentTimeMillis()
-            if (showLoading) onRefreshingChange(true)
-            try {
-                val ipList = devices.map { it.first }
-                if (ipList.isNotEmpty()) {
-                    val allProjects = withContext(Dispatchers.IO) { fetchAllProjects(ipList) }
-                    val currentIps = devices.map { it.first }.toSet()
-                    val filteredProjects = allProjects.filter { it.deviceIp in currentIps }
-
-                    onProjectsChange(filteredProjects)
-                }
-            } finally {
-                if (showLoading) {
-                    val elapsedTime = System.currentTimeMillis() - startTime
-                    if (elapsedTime < 200) {
-                        delay(200 - elapsedTime)
-                    }
-                    onRefreshingChange(false)
-                }
-            }
-        }
-    }
-
-    // Auto refresh: always silent
-    LaunchedEffect(devices) {
-        if (devices.isNotEmpty()) {
-            while (true) {
-                loadProjects(showLoading = false)
-                delay(3000)
-            }
-        }
-    }
-
+    val projects = state.projects
     val refreshState = rememberPullToRefreshState()
 
     PullToRefreshBox(
-        isRefreshing = refreshing,
-        onRefresh = { loadProjects() },
+        isRefreshing = state.isRefreshing,
+        onRefresh = onRefresh,
         state = refreshState,
         modifier = Modifier.fillMaxSize()
     ) {
@@ -953,6 +867,19 @@ fun ProjectList(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (state.errors.isNotEmpty()) {
+                item(key = "project_errors") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        state.errors.forEach { (ip, error) ->
+                            Text(
+                                text = projectErrorMessage(ip, error),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+            }
             if (projects.isEmpty()) {
                 item {
                     Box(
@@ -999,6 +926,33 @@ fun ProjectList(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun projectErrorMessage(ip: String, error: RendropError): String {
+    val noDetail = stringResource(R.string.project_error_no_detail)
+    return when (error) {
+        is RendropError.Network -> stringResource(
+            R.string.project_network_error,
+            ip,
+            error.detail?.takeIf { it.isNotBlank() } ?: noDetail,
+        )
+        is RendropError.Http -> stringResource(
+            R.string.project_http_error,
+            ip,
+            error.statusCode,
+        )
+        is RendropError.Protocol -> stringResource(
+            R.string.project_protocol_error,
+            ip,
+            error.detail?.takeIf { it.isNotBlank() } ?: noDetail,
+        )
+        is RendropError.Unexpected -> stringResource(
+            R.string.project_unknown_error,
+            ip,
+            error.detail?.takeIf { it.isNotBlank() } ?: noDetail,
+        )
     }
 }
 

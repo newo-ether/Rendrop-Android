@@ -9,17 +9,18 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 class ProjectMonitorService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var monitorJob: Job? = null
-    private val previousStates = mutableMapOf<String, String>()
+    private val previousStates = mutableMapOf<ProjectKey, String>()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -73,34 +74,27 @@ class ProjectMonitorService : Service() {
     private fun startMonitoring() {
         monitorJob?.cancel()
         monitorJob = serviceScope.launch {
-            DeviceManager.getDevices(applicationContext).collectLatest { devices ->
-                while (isActive) {
-                    val ipList = devices.map { it.first }
-                    if (ipList.isNotEmpty()) {
-                        try {
-                            val allProjects = fetchAllProjects(ipList)
-                            val currentIps = ipList.toSet()
-                            val filteredProjects = allProjects.filter { it.deviceIp in currentIps }
-
-                            filteredProjects.forEach { project ->
-                                val key = "${project.deviceIp}_${project.id}"
-                                val newState = project.state.lowercase()
-                                val oldState = previousStates[key]
-
-                                if (oldState != null) {
-                                    if (oldState != newState && (newState == "finished" || newState == "error")) {
-                                        showProjectNotification(project, newState == "finished")
-                                    }
-                                }
-                                previousStates[key] = newState
-                            }
-                        } catch (e: Exception) {
-                            Log.e("MonitorService", "Error fetching projects", e)
-                        }
+            applicationContext.projectRepository.state
+                .map { it.projects }
+                .distinctUntilChanged()
+                .collectLatest { projects ->
+                    val currentKeys = projects.mapTo(mutableSetOf()) {
+                        ProjectKey(it.deviceIp, it.id)
                     }
-                    delay(5000) // Poll every 5 seconds
+                    previousStates.keys.retainAll(currentKeys)
+
+                    projects.forEach { project ->
+                        val key = ProjectKey(project.deviceIp, project.id)
+                        val newState = project.state.lowercase()
+                        val oldState = previousStates[key]
+                        if (oldState != null && oldState != newState &&
+                            (newState == "finished" || newState == "error")
+                        ) {
+                            showProjectNotification(project, newState == "finished")
+                        }
+                        previousStates[key] = newState
+                    }
                 }
-            }
         }
     }
 

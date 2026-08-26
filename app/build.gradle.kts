@@ -17,8 +17,7 @@ android {
 
 
         ndk {
-            // Include both common ARM architectures
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+            abiFilters.add("arm64-v8a")
         }
     }
 
@@ -74,8 +73,8 @@ dependencies {
     // DataStore
     implementation(libs.datastore.preferences)
 
-    // RxFFmpeg
-    implementation(libs.rxffmpeg)
+    // FFmpeg
+    implementation(libs.ffmpeg.kit.min)
 
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
@@ -84,5 +83,6 @@ dependencies {
     implementation(libs.androidx.compose.animation)
     implementation(libs.androidx.compose.animation.core)
 
+    testImplementation(libs.junit)
     debugImplementation(libs.androidx.ui.tooling)
 }
