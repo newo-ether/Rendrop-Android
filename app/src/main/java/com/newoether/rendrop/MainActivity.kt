@@ -9,6 +9,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.newoether.rendrop.ui.theme.RendropTheme
@@ -39,7 +41,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             RendropTheme {
-                MainScreen()
+                // Root surface provides onBackground as LocalContentColor for bare icons and text.
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    MainScreen()
+                }
             }
         }
     }

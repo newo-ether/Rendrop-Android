@@ -82,7 +82,34 @@ dependencies {
     // Animation
     implementation(libs.androidx.compose.animation)
     implementation(libs.androidx.compose.animation.core)
+    // Seed-color Material scheme generation (same as Agora)
+    implementation(libs.material.color.utilities)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.ui.tooling)
 }
+
+// Source size gate: every handwritten Kotlin file stays at or below 800 physical lines.
+// CRLF, LF and a lone CR each count as one line break, so Windows and Linux agree.
+val maxKotlinFileLines = 800
+val verifyKotlinFileSize by tasks.registering {
+    group = "verification"
+    description = "Fails when a Kotlin source file exceeds $maxKotlinFileLines physical lines."
+    val sources = fileTree("src") { include("**/*.kt", "**/*.kts") }
+    inputs.files(sources)
+    doLast {
+        val oversized = sources.files.mapNotNull { file ->
+            val text = file.readText()
+            val breaks = Regex("\r\n|\r|\n").findAll(text).count()
+            val lines = if (text.isEmpty()) 0 else breaks + if (text.endsWith("\n") || text.endsWith("\r")) 0 else 1
+            if (lines > maxKotlinFileLines) "${file.relativeTo(projectDir)}: $lines lines" else null
+        }.sorted()
+        if (oversized.isNotEmpty()) {
+            throw GradleException(
+                "Kotlin source files over $maxKotlinFileLines lines:\n" + oversized.joinToString("\n")
+            )
+        }
+        logger.lifecycle("verifyKotlinFileSize: ${sources.files.size} files, limit $maxKotlinFileLines")
+    }
+}
+tasks.named("preBuild") { dependsOn(verifyKotlinFileSize) }

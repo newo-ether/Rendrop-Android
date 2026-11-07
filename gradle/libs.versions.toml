@@ -13,6 +13,7 @@ animation = "1.10.2"
 animationCore = "1.10.2"
 
 junit = "4.13.2"
+materialKolor = "4.1.1"
 [libraries]
 androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -39,6 +40,7 @@ androidx-compose-animation = { group = "androidx.compose.animation", name = "ani
 androidx-compose-animation-core = { group = "androidx.compose.animation", name = "animation-core", version.ref = "animationCore" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+material-color-utilities = { group = "com.materialkolor", name = "material-color-utilities", version.ref = "materialKolor" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
