@@ -23,7 +23,7 @@ class ProjectRepositoryTest {
     }
 
     @Test
-    fun failedDeviceRefreshKeepsLastSuccessfulProjects() {
+    fun offlineDeviceDropsItsProjects() {
         val previous = project("existing", "10.0.0.2")
 
         val result = mergeProjectRefresh(
@@ -31,7 +31,23 @@ class ProjectRepositoryTest {
             deviceIps = listOf("10.0.0.2"),
             batch = ProjectRefreshBatch(
                 projectsByDevice = emptyMap(),
-                errors = mapOf("10.0.0.2" to RendropError.Network("offline")),
+                errors = mapOf("10.0.0.2" to RendropError.Network("timeout")),
+            ),
+        )
+
+        assertEquals(emptyList<ProjectInfo>(), result)
+    }
+
+    @Test
+    fun faultyButReachableDeviceKeepsLastSuccessfulProjects() {
+        val previous = project("existing", "10.0.0.2")
+
+        val result = mergeProjectRefresh(
+            previousProjects = listOf(previous),
+            deviceIps = listOf("10.0.0.2"),
+            batch = ProjectRefreshBatch(
+                projectsByDevice = emptyMap(),
+                errors = mapOf("10.0.0.2" to RendropError.Http(500)),
             ),
         )
 
@@ -48,7 +64,7 @@ class ProjectRepositoryTest {
             deviceIps = listOf("10.0.0.3"),
             batch = ProjectRefreshBatch(
                 projectsByDevice = emptyMap(),
-                errors = mapOf("10.0.0.3" to RendropError.Network("offline")),
+                errors = mapOf("10.0.0.3" to RendropError.Http(500)),
             ),
         )
 

@@ -138,10 +138,18 @@ class ProjectRepository(
     }
 }
 
+/**
+ * An unreachable device is offline: its queue is unknown, so its old projects are dropped rather
+ * than shown as if still queued. Other failures (bad HTTP status, bad payload) keep the last good
+ * list, since the device is up and the fault is reported separately.
+ */
 internal fun mergeProjectRefresh(
     previousProjects: List<ProjectInfo>,
     deviceIps: List<String>,
     batch: ProjectRefreshBatch,
 ): List<ProjectInfo> = deviceIps.flatMap { ip ->
-    batch.projectsByDevice[ip] ?: previousProjects.filter { it.deviceIp == ip }
+    batch.projectsByDevice[ip] ?: when (batch.errors[ip]) {
+        is RendropError.Network -> emptyList()
+        else -> previousProjects.filter { it.deviceIp == ip }
+    }
 }.distinctBy { ProjectKey(it.deviceIp, it.id) }

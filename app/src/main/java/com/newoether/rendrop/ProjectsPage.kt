@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Inventory2
@@ -52,6 +53,7 @@ import com.newoether.rendrop.ui.components.ContentMaxWidth
 import com.newoether.rendrop.ui.components.EmptyState
 import com.newoether.rendrop.ui.components.GroupHeader
 import com.newoether.rendrop.ui.components.GroupItem
+import com.newoether.rendrop.ui.components.ListRow
 import com.newoether.rendrop.ui.components.StatusPill
 import com.newoether.rendrop.ui.components.TitleAreaHeight
 import com.newoether.rendrop.ui.components.TitleBarHeight
@@ -71,6 +73,9 @@ fun ProjectsPage(
 ) {
     val fraction by rememberTitleFraction(listState)
     val grouped = state.projects.groupBy { it.deviceIp }
+    // Unreachable devices read as offline in their own group; only real faults get the red card.
+    val offline = state.errors.filterValues { it is RendropError.Network }.keys
+    val faults = state.errors.filterValues { it !is RendropError.Network }
 
     Box(Modifier.fillMaxSize()) {
         TitledPullRefresh(refreshing = state.isRefreshing, onRefresh = onRefresh) {
@@ -85,8 +90,8 @@ fun ProjectsPage(
                 contentPadding = PaddingValues(top = statusBarTop() + TitleBarHeight, bottom = BottomBarClearance)
             ) {
                 item(key = "title_area") { Spacer(Modifier.height(TitleAreaHeight)) }
-                if (state.errors.isNotEmpty()) {
-                    item(key = "errors") { ErrorCard(state.errors) }
+                if (faults.isNotEmpty()) {
+                    item(key = "errors") { ErrorCard(faults) }
                 }
                 when {
                     devices.isEmpty() -> item(key = "no_devices") {
@@ -101,14 +106,7 @@ fun ProjectsPage(
                             }
                         }
                     }
-                    state.projects.isEmpty() -> item(key = "empty") {
-                        EmptyState(
-                            icon = Icons.Default.Inventory2,
-                            message = stringResource(R.string.project_list_empty),
-                            modifier = Modifier.fillParentMaxHeight(0.6f)
-                        )
-                    }
-                    else -> devices.filter { grouped[it.first].orEmpty().isNotEmpty() }.forEachIndexed { groupIndex, (ip, name) ->
+                    else -> devices.forEachIndexed { groupIndex, (ip, name) ->
                         val deviceProjects = grouped[ip].orEmpty()
                         item(key = "header_$ip") {
                             // Extra gap separates one device's group from the previous one.
@@ -118,6 +116,14 @@ fun ProjectsPage(
                                 trailing = ip,
                                 modifier = Modifier.padding(top = if (groupIndex > 0) 16.dp else 0.dp)
                             )
+                        }
+                        when {
+                            ip in offline -> item(key = "offline_$ip") {
+                                DeviceNoticeRow(Icons.Default.CloudOff, stringResource(R.string.device_offline))
+                            }
+                            deviceProjects.isEmpty() -> item(key = "empty_$ip") {
+                                DeviceNoticeRow(Icons.Default.Inventory2, stringResource(R.string.project_list_empty))
+                            }
                         }
                         itemsIndexed(deviceProjects, key = { _, p -> "${p.deviceIp}_${p.id}" }) { index, project ->
                             GroupItem(index = index, count = deviceProjects.size, onClick = { onProjectClick(project) }) {
@@ -130,6 +136,17 @@ fun ProjectsPage(
             // Inside the refresh box so the indicator draws above the opaque title bar.
             CollapsingTitleBar(title = stringResource(R.string.projects), fraction = fraction)
         }
+    }
+}
+
+/** Single muted row standing in for a device's queue when it is offline or empty. */
+@Composable
+private fun DeviceNoticeRow(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    GroupItem(index = 0, count = 1) {
+        ListRow(
+            headline = { Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            leading = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        )
     }
 }
 

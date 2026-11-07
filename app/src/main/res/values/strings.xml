@@ -16,6 +16,7 @@
     <string name="ip_exists">IP already exists</string>
     <string name="device_list_empty">Device list is empty</string>
     <string name="project_list_empty">Project list is empty</string>
+    <string name="device_offline">Offline</string>
     <string name="delete">Delete</string>
     <string name="edit">Edit</string>
     <string name="confirm_delete">Confirm Delete</string>
